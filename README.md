@@ -30,8 +30,7 @@ These fundamental tissue programs, alone or in combination, may be associated wi
 ```
 .
 ├── README.md
-├── data/
-│   ├── annotations/           # Manual tissue region annotations (CSV files)
+├── annotations/           # Manual tissue region annotations (CSV files)
 │   │   ├── P3_GRANULOMAS.csv
 │   │   ├── Organized_Granulomas_v2.csv
 │   │   ├── Diffuse_Immune.csv
