@@ -1,0 +1,1556 @@
+---
+title: "P4_L Analysis - Figure 7 and Supplementary Figure S6"
+output: html_document
+date: "2025-12-09"
+---
+
+# ============================================
+# SETUP AND LIBRARIES
+# ============================================
+```{r setup, include=FALSE}
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(tidyr)
+library(patchwork)
+library(ggpubr)
+library(pheatmap)
+library(ComplexHeatmap)
+library(circlize)
+library(RColorBrewer)
+library(viridis)
+library(rstatix)
+library(tibble)
+library(scatterpie)
+
+# Define study parameters
+study_name <- "ethiopian4mm_cohort"
+study_path <- "F:/SD23.9.2_Dioraphte_Ethiopian_4mm_ND23.09/"
+
+# Define samples (removed patient 5 lesion and non lesional)
+samples <- c("392_1_2", "392_1_4", "393_3_2", "393_3_4", 
+             "391_4_2", "391_4_4", "392_5_2", "392_5_4",
+             "391_7_2", "391_7_4")
+
+sample_group <- rep(c("healthy", "lesion"), 5)
+
+
+# Define paths
+read_path <- paste0(study_path, "R/No_P5/")
+save_pathL <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_sep/lesion/iteration_nov2025/")
+
+# Tissue category CSV paths
+tissue_csv_base <- paste0(study_path, "V12N28-392/PK_392_5_4_run/outs/")
+organized_gran_csv <- paste0(tissue_csv_base, "Organized_Granulomas_v2.csv")
+diffuse_immune_csv <- paste0(tissue_csv_base, "Diffuse_Immune.csv")
+uninvolved_csv <- paste0(tissue_csv_base, "Uninvolved.csv")
+
+# Create save directory for P4
+save_pathP4 <- paste0(save_pathL, "P4/test/")
+if(!dir.exists(save_pathP4)) {
+  dir.create(save_pathP4, recursive = TRUE)
+}
+```
+
+# ============================================
+# CUSTOM FUNCTIONS
+# ============================================
+```{r custom_functions}
+# Remove x-axis text and tick for stacked violin plots
+modify_vlnplot <- function(obj, 
+                          feature, 
+                          pt.size = 0, 
+                          plot.margin = unit(c(-0.75, 0, -0.75, 0), "cm"),
+                          ...) {
+  p <- VlnPlot(obj, features = feature, pt.size = pt.size, ...) + 
+    xlab("") + ylab(feature) + ggtitle("") + 
+    theme(legend.position = "none", 
+          axis.text.x = element_blank(), 
+          axis.ticks.x = element_blank(), 
+          axis.title.y = element_text(size = rel(1), angle = 0), 
+          axis.text.y = element_text(size = rel(1)), 
+          plot.margin = plot.margin)
+  return(p)
+}
+
+# Extract max value of y axis
+extract_max <- function(p) {
+  ymax <- max(ggplot_build(p)$layout$panel_scales_y[[1]]$range$range)
+  return(ceiling(ymax))
+}
+
+# Stacked violin plot function
+StackedVlnPlot <- function(obj, features,
+                          pt.size = 0, 
+                          plot.margin = unit(c(-0.75, 0, -0.75, 0), "cm"),
+                          ...) {
+  
+  plot_list <- purrr::map(features, function(x) modify_vlnplot(obj = obj, feature = x, ...))
+  
+  # Add back x-axis title to bottom plot
+  plot_list[[length(plot_list)]] <- plot_list[[length(plot_list)]] +
+    theme(axis.text.x = element_text(), axis.ticks.x = element_line())
+  
+  # Change y-axis tick to only max value
+  ymaxs <- purrr::map_dbl(plot_list, extract_max)
+  plot_list <- purrr::map2(plot_list, ymaxs, function(x, y) x + 
+                            scale_y_continuous(breaks = c(y)) + 
+                            expand_limits(y = y))
+
+  p <- patchwork::wrap_plots(plotlist = plot_list, ncol = 1)
+  return(p)
+}
+
+# Pairwise comparison function for statistics
+perform_comparisons <- function(data, category_name, ref_group = "P4_L") {
+  
+  # Filter data for this category
+  category_data <- data %>% filter(Category == category_name)
+  
+  # Get all unique patients except reference
+  patients <- unique(category_data$sample_id)
+  patients <- patients[patients != ref_group]
+  
+  # Perform comparisons
+  results <- lapply(patients, function(patient) {
+    
+    # Get data for reference and current patient
+    ref_values <- category_data %>% 
+      filter(sample_id == ref_group) %>% 
+      pull(Proportion)
+    
+    patient_values <- category_data %>% 
+      filter(sample_id == patient) %>% 
+      pull(Proportion)
+    
+    # Perform Wilcoxon test
+    test_result <- wilcox.test(patient_values, ref_values, exact = FALSE)
+    
+    # Calculate medians and IQR
+    ref_median <- median(ref_values, na.rm = TRUE)
+    patient_median <- median(patient_values, na.rm = TRUE)
+    ref_iqr <- IQR(ref_values, na.rm = TRUE)
+    patient_iqr <- IQR(patient_values, na.rm = TRUE)
+    
+    # Return results
+    data.frame(
+      Category = category_name,
+      Patient = patient,
+      Reference = ref_group,
+      Patient_Median = round(patient_median, 4),
+      Reference_Median = round(ref_median, 4),
+      Patient_IQR = round(patient_iqr, 4),
+      Reference_IQR = round(ref_iqr, 4),
+      Patient_N_spots = length(patient_values),
+      Reference_N_spots = length(ref_values),
+      P_value = test_result$p.value,
+      P_value_rounded = round(test_result$p.value, 4),
+      Significance = case_when(
+        test_result$p.value <= 0.0001 ~ "****",
+        test_result$p.value <= 0.001 ~ "***",
+        test_result$p.value <= 0.01 ~ "**",
+        test_result$p.value <= 0.05 ~ "*",
+        TRUE ~ "ns"
+      ),
+      stringsAsFactors = FALSE
+    )
+  })
+  
+  # Combine all results
+  do.call(rbind, results)
+}
+```
+
+# ============================================
+# LOAD DATA AND DEFINE COLORS
+# ============================================
+```{r load_data_and_setup}
+# Load lesion only integrated object
+integrated_Eth_cohort_filteredL <- readRDS(paste0(save_pathL, "Lesion_integrated_Eth_cohort_filtered_35stdeconvTopics_reclus_relabelled_COMBINED_dominantTopic_added.rds"))
+
+cat("Lesion-only object loaded:", ncol(integrated_Eth_cohort_filteredL), "spots\n")
+print(table(integrated_Eth_cohort_filteredL$sample_id))
+
+# Define cell types
+celltypes <- colnames(integrated_Eth_cohort_filteredL@meta.data)[69:103]
+
+# Define immune topics
+immune_topics <- c(
+  "IgM_Plasma", "IgA_Plasma", "Neuts", "memB", "Plasmablasts", 
+  "EarlyPlasma_APC", "Teff", "Tcyto", "Th1_DC", "Tcm_DC", "Th1",
+  "Cytomono", "M1_mac", "APC_M1", "APC_M2Mac", "Act_M2Mac", 
+  "Tissue_Repair_M2Mac", "Lipid_macs", "organised_immune"
+)
+
+# Define cell type colors
+celltype_colors <- c(
+  # PLASMA/B CELLS
+  "IgM_Plasma" = "#00CED1", "IgA_Plasma" = "#00FFFF",
+  "Plasmablasts" = "#4682B4", "memB" = "#2F4F4F",
+  "EarlyPlasma_APC" = "#1E90FF",
+  
+  # T CELLS
+  "Teff" = "#9400D3", "Th1_DC" = "#EE82EE",
+  "Tcm_DC" = "#FF1493", "Th1" = "#C71585", "Tcyto" = "#7B68EE",
+  
+  # MACROPHAGES
+  "Cytomono" = "#00008B", "M1_mac" = "darkred", "APC_M1" = "#FFD700",
+  "APC_M2Mac" = "#D2691E", "Act_M2Mac" = "#CD853F",
+  "Tissue_Repair_M2Mac" = "#DEB887", "Lipid_macs" = "#FF6347",
+  
+  # NEUTROPHILS
+  "Neuts" = "#00FF7F",
+  
+  # IMMUNE COMPLEX
+  "organised_immune" = "#ADFF2F",
+  
+  # KERATINOCYTES
+  "BasalKer" = "#FDBF6F", "inf_BasalKer" = "#F0FFF0",
+  "SuprabasalKer" = "#CAB2D6", "inf_SupraBasal" = "#808000",
+  "TopKer" = "#A6CEE3", "inf_TopKer" = "#87CEEB",
+  "LC_Basal" = "#FB9A99",
+  
+  # STROMAL
+  "Sebaceous" = "#FFC0CB", "Eccrine" = "#B2DF8A",
+  "muscle" = "#E6E6FA", "Schwann" = "#FFA07A", "Endo" = "#FFF0F5",
+  
+  # FIBROBLASTS
+  "Fib1" = "#FFE4B5", "Fib2" = "#FFFACD", "fib3" = "#D3D3D3",
+  
+  # MIXED/OTHER
+  "RBC_mac_Tc" = "#808080"
+)
+
+# Define patient colors (consistent with previous figures)
+patient_colors <- c(
+  "P1_L" = "#F8766D", 
+  "P2_L" = "#A3A500", 
+  "P3_L" = "#00BF7D", 
+  "P4_L" = "#00B0F6", 
+  "P6_L" = "#E76BF3"
+)
+
+# Set up comparison
+integrated_Eth_cohort_filteredL$comparison_P4 <- ifelse(
+  integrated_Eth_cohort_filteredL$sample_id == "P4_L", 
+  "P4_L", 
+  "Others"
+)
+
+Idents(integrated_Eth_cohort_filteredL) <- "comparison_P4"
+
+cat("\n=== Patient Grouping ===\n")
+print(table(integrated_Eth_cohort_filteredL$comparison_P4))
+```
+
+# ============================================
+# DIFFERENTIAL EXPRESSION: P4_L vs OTHERS
+# ============================================
+```{r DE_P4_vs_others}
+cat("\n=== Starting P4_L differential expression analysis ===\n")
+
+# Find markers for P4_L
+p4_markers <- FindMarkers(
+  integrated_Eth_cohort_filteredL,
+  ident.1 = "P4_L",
+  ident.2 = "Others",
+  min.pct = 0.25,
+  min.diff.pct = 0.25,
+  logfc.threshold = 0.5,
+  test.use = "wilcox"
+)
+
+# Add gene names
+p4_markers$gene <- rownames(p4_markers)
+
+# Fix zero p-values
+p4_markers$p_val <- ifelse(p4_markers$p_val == 0, 1e-300, p4_markers$p_val)
+p4_markers$p_val_adj <- ifelse(p4_markers$p_val_adj == 0, 1e-300, p4_markers$p_val_adj)
+
+# Order by log2FC
+p4_markers <- p4_markers %>%
+  arrange(desc(avg_log2FC))
+
+# Summary
+cat("\n=== P4_L DIFFERENTIAL EXPRESSION SUMMARY ===\n")
+sig_genes_p4 <- p4_markers %>%
+  filter(p_val_adj < 0.05, avg_log2FC > 0.5)
+
+cat("Total genes tested:", nrow(p4_markers), "\n")
+cat("Significant upregulated genes in P4_L:", nrow(sig_genes_p4), "\n")
+cat("Significant downregulated genes in P4_L:", 
+    sum(p4_markers$p_val_adj < 0.05 & p4_markers$avg_log2FC < -0.5), "\n")
+
+# View top upregulated genes
+cat("\n=== TOP 30 UPREGULATED GENES IN P4_L ===\n")
+top_30_p4 <- sig_genes_p4 %>%
+  head(30)
+print(top_30_p4[, c("gene", "avg_log2FC", "pct.1", "pct.2", "p_val_adj")])
+
+# Save full results
+write.csv(p4_markers, 
+          paste0(save_pathP4, "P4_vs_others_DEGs.csv"),
+          row.names = FALSE)
+
+cat("DE analysis complete\n")
+```
+
+# ============================================
+# FIGURE 7B: Volcano Plot P4_L vs Others
+# ============================================
+```{r figure_7B}
+cat("\n=== FIGURE 7B: Volcano Plot ===\n")
+
+# Prepare data
+volcano_data_p4 <- p4_markers
+volcano_data_p4$neg_log10_p <- -log10(volcano_data_p4$p_val_adj)
+
+# Create gene_type column
+volcano_data_p4$gene_type <- ifelse(
+  volcano_data_p4$p_val_adj < 0.05 & abs(volcano_data_p4$avg_log2FC) > 0.25,
+  "Significant",
+  "NS"
+)
+
+# Select top genes to label
+top_genes_label <- p4_markers %>%
+  filter(p_val_adj < 0.05) %>%
+  arrange(desc(abs(avg_log2FC))) %>%
+  head(50) %>%
+  pull(gene)
+
+volcano_data_p4$gene_label <- ifelse(
+  volcano_data_p4$gene %in% top_genes_label,
+  volcano_data_p4$gene, 
+  ""
+)
+
+# Create volcano plot
+p_volcano_p4 <- ggplot(volcano_data_p4, aes(x = avg_log2FC, y = neg_log10_p)) +
+  geom_point(aes(color = gene_type, size = gene_type), alpha = 0.6) +
+  scale_color_manual(
+    values = c("Significant" = "#B09C85", "NS" = "gray80"),
+    name = "Gene Category"
+  ) +
+  scale_size_manual(
+    values = c("Significant" = 2, "NS" = 1),
+    name = "Gene Category"
+  ) +
+  geom_text_repel(
+    data = subset(volcano_data_p4, gene_label != ""),
+    aes(label = gene_label),
+    size = 3,
+    box.padding = 0.5,
+    max.overlaps = 50,
+    segment.color = "gray50",
+    fontface = "bold"
+  ) +
+  geom_vline(xintercept = c(-0.25, 0.25), linetype = "dashed", color = "gray40") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "gray40") +
+  labs(
+    title = "P4_L vs Other Patients",
+    subtitle = paste0("Significant DEGs: ", 
+                     sum(volcano_data_p4$p_val_adj < 0.05 & abs(volcano_data_p4$avg_log2FC) > 0.25)),
+    x = "Log2 Fold Change",
+    y = "-Log10(Adjusted P-value)"
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(size = 14, face = "bold")
+  )
+
+ggsave(paste0(save_pathP4, "7_B_P4_volcano.pdf"),
+       p_volcano_p4, width = 10, height = 6)
+
+cat("Figure 7B complete: Volcano plot saved\n")
+```
+
+# ============================================
+# FIGURE 7C: M1 vs M2 Macrophage Proportions
+# ============================================
+```{r figure_7C}
+cat("\n=== FIGURE 7C: M1/M2 Macrophage Analysis ===\n")
+
+# Define M1 and M2 macrophage cell types
+m1_celltypes <- c("M1_mac", "APC_M1", "Cytomono")
+m2_celltypes <- c("APC_M2Mac", "Tissue_Repair_M2Mac", "Act_M2Mac", "Lipid_macs")
+DC_T <- c("Th1_DC", "Tcm_DC")
+
+# Get spot-level data
+spot_level_data <- integrated_Eth_cohort_filteredL@meta.data %>%
+  select(sample_id, all_of(c(m1_celltypes, m2_celltypes, DC_T)))
+
+# Calculate total M1 and M2 per spot
+spot_level_data$M1_total <- rowSums(spot_level_data[, m1_celltypes, drop = FALSE])
+spot_level_data$M2_total <- rowSums(spot_level_data[, m2_celltypes, drop = FALSE])
+spot_level_data$DC_T <- rowSums(spot_level_data[, DC_T, drop = FALSE])
+
+# Reshape for plotting
+spot_m1m2_totals <- spot_level_data %>%
+  select(sample_id, M1_total, M2_total, DC_T) %>%
+  pivot_longer(cols = -sample_id, names_to = "Category", values_to = "Proportion")
+
+# Boxplot
+p_m1m2_totals_box <- ggplot(spot_m1m2_totals, 
+                            aes(x = sample_id, y = Proportion, fill = Category)) +
+  geom_boxplot(position = position_dodge(0.8), 
+               outlier.shape = 21, 
+               outlier.alpha = 0.5,
+               width = 0.7) +
+  scale_fill_manual(
+    values = c("M1_total" = "#E64B35", "M2_total" = "#4DBBD5", 
+               "DC_T" = "#00A087"),
+    labels = c("M1_total" = "Pro-inflammatory Macrophages", 
+               "M2_total" = "Alternatively activated Macrophages",
+               "DC_T" = "DC and T")
+  ) +
+  labs(
+    title = "M1 vs M2 Macrophage Proportions (Spot-Level)",
+    x = "Patient", 
+    y = "Total Proportion per spot"
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    legend.position = "top",
+    legend.title = element_blank(),
+    plot.title = element_text(size = 14, face = "bold")
+  )
+
+ggsave(paste0(save_pathP4, "7_C_P4_M1_M2_totals_spotlevel_boxplot.pdf"),
+       p_m1m2_totals_box, width = 8, height = 6)
+
+# Statistical comparisons
+all_comparisons <- rbind(
+  perform_comparisons(spot_m1m2_totals, "M1_total"),
+  perform_comparisons(spot_m1m2_totals, "M2_total"),
+  perform_comparisons(spot_m1m2_totals, "DC_T")
+)
+
+all_comparisons <- all_comparisons %>%
+  arrange(Category, Patient) %>%
+  select(Category, Patient, Reference, 
+         Patient_Median, Patient_IQR, Patient_N_spots,
+         Reference_Median, Reference_IQR, Reference_N_spots,
+         P_value, P_value_rounded, Significance)
+
+write.csv(all_comparisons, 
+          paste0(save_pathP4, "Macrophage_Statistical_Comparisons.csv"),
+          row.names = FALSE)
+
+cat("Figure 7C complete: M1/M2 boxplot and statistics saved\n")
+```
+
+# ============================================
+# IMPORT TISSUE CATEGORY ANNOTATIONS
+# ============================================
+```{r import_tissue_categories}
+cat("\n=== IMPORTING TISSUE CATEGORY ANNOTATIONS ===\n")
+
+# Import the three CSVs
+organized_gran <- read.csv(organized_gran_csv)
+diffuse_immune <- read.csv(diffuse_immune_csv)
+uninvolved <- read.csv(uninvolved_csv)
+
+cat("=== Organized Granulomas CSV ===\n")
+cat("Rows:", nrow(organized_gran), "\n")
+cat("Columns:", paste(colnames(organized_gran), collapse = ", "), "\n")
+
+cat("\n=== Diffuse Immune CSV ===\n")
+cat("Rows:", nrow(diffuse_immune), "\n")
+cat("Columns:", paste(colnames(diffuse_immune), collapse = ", "), "\n")
+
+cat("\n=== Uninvolved CSV ===\n")
+cat("Rows:", nrow(uninvolved), "\n")
+cat("Columns:", paste(colnames(uninvolved), collapse = ", "), "\n")
+
+# Create P4 subset
+p4_subset <- subset(integrated_Eth_cohort_filteredL, subset = sample_id == "P4_L")
+cat("\nTotal spots in P4_L:", ncol(p4_subset), "\n")
+
+# Extract barcodes and add category label
+organized_barcodes <- data.frame(
+  Barcode = organized_gran$Barcode[!is.na(organized_gran$Organized_Granulomas)],
+  tissue_category = "Organized_Granulomas",
+  area_number = organized_gran$Organized_Granulomas[!is.na(organized_gran$Organized_Granulomas)]
+)
+
+diffuse_barcodes <- data.frame(
+  Barcode = diffuse_immune$Barcode[!is.na(diffuse_immune$Diffuse_immune)],
+  tissue_category = "Diffuse_Immune",
+  area_number = diffuse_immune$Diffuse_immune[!is.na(diffuse_immune$Diffuse_immune)]
+)
+
+uninvolved_barcodes <- data.frame(
+  Barcode = uninvolved$Barcode[!is.na(uninvolved$Uninvolved)],
+  tissue_category = "Uninvolved",
+  area_number = 1
+)
+
+# Combine all three
+all_annotations <- rbind(
+  organized_barcodes,
+  diffuse_barcodes,
+  uninvolved_barcodes
+)
+
+cat("\n=== Combined Annotations ===\n")
+cat("Total barcodes annotated:", nrow(all_annotations), "\n")
+print(table(all_annotations$tissue_category))
+
+# Check for duplicates
+duplicated_barcodes <- all_annotations$Barcode[duplicated(all_annotations$Barcode)]
+if (length(duplicated_barcodes) > 0) {
+  cat("\n⚠️ WARNING: Found duplicated barcodes\n")
+  cat("Removing duplicates - keeping first occurrence only\n")
+  all_annotations <- all_annotations[!duplicated(all_annotations$Barcode), ]
+}
+
+# Add area label
+all_annotations$area_label <- paste0(
+  all_annotations$tissue_category, "_Area_", 
+  all_annotations$area_number
+)
+
+# Add suffix if needed
+p4_spot_ids <- rownames(p4_subset@meta.data)
+
+if (grepl("_\\d+$", p4_spot_ids[1]) && !grepl("_\\d+$", all_annotations$Barcode[1])) {
+  suffix_match <- regmatches(p4_spot_ids[1], regexpr("_\\d+$", p4_spot_ids[1]))
+  cat("Adding suffix", suffix_match, "to CSV barcodes\n")
+  all_annotations$Barcode_full <- paste0(all_annotations$Barcode, suffix_match)
+} else {
+  all_annotations$Barcode_full <- all_annotations$Barcode
+}
+
+# Initialize columns
+p4_subset$tissue_category <- NA
+p4_subset$area_number <- NA
+p4_subset$area_label <- NA
+
+# Match annotations
+matched_count <- 0
+for (i in 1:nrow(all_annotations)) {
+  barcode <- all_annotations$Barcode_full[i]
+  
+  if (barcode %in% p4_spot_ids) {
+    p4_subset$tissue_category[rownames(p4_subset@meta.data) == barcode] <- 
+      all_annotations$tissue_category[i]
+    p4_subset$area_number[rownames(p4_subset@meta.data) == barcode] <- 
+      all_annotations$area_number[i]
+    p4_subset$area_label[rownames(p4_subset@meta.data) == barcode] <- 
+      all_annotations$area_label[i]
+    matched_count <- matched_count + 1
+  }
+}
+
+cat("\n=== Annotation Import Summary ===\n")
+cat("Total spots matched:", matched_count, "\n")
+cat("Annotated spots:", sum(!is.na(p4_subset$tissue_category)), "\n")
+cat("Unannotated spots:", sum(is.na(p4_subset$tissue_category)), "\n")
+
+cat("\n=== Tissue Category Distribution ===\n")
+print(table(p4_subset$tissue_category, useNA = "ifany"))
+
+cat("\n=== Area Labels ===\n")
+print(table(p4_subset$area_label, useNA = "ifany"))
+
+cat("Tissue category annotations complete\n")
+```
+
+# ============================================
+# FIGURE 7E: Spatial Plot Three Categories
+# ============================================
+```{r figure_7E}
+cat("\n=== FIGURE 7E: Spatial Plot Three Categories ===\n")
+
+p_three_categories <- SpatialDimPlot(
+  p4_subset,
+  group.by = "tissue_category",
+  pt.size.factor = 2.5,
+  crop = FALSE,
+  cols = c(
+    "Organized_Granulomas" = "#E64B35",
+    "Diffuse_Immune" = "#F39B7F",
+    "Uninvolved" = "gray90"
+  ),
+  alpha = c(0.9, 0.7, 0.1),
+  image.alpha = 0.5
+) +
+  labs(title = "P4_L: Tissue Categories") +
+  theme(legend.position = "right")
+
+ggsave(paste0(save_pathP4, "7_E_P4_ThreeCategories_Spatial.pdf"),
+       p_three_categories, width = 10, height = 8)
+
+cat("Figure 7E complete: Spatial plot saved\n")
+```
+
+# ============================================
+# DIFFERENTIAL EXPRESSION: THREE-WAY COMPARISON
+# ============================================
+```{r DE_three_way}
+cat("\n=== Three-way Differential Expression ===\n")
+
+Idents(p4_subset) <- "tissue_category"
+
+three_way_markers <- FindAllMarkers(
+  p4_subset,
+  only.pos = TRUE,
+  min.pct = 0.1,
+  logfc.threshold = 0.25,
+  test.use = "wilcox"
+)
+
+three_way_sig <- three_way_markers %>%
+  filter(p_val_adj < 0.05) %>%
+  arrange(cluster, desc(avg_log2FC))
+
+cat("\nSignificant markers per category:\n")
+print(table(three_way_sig$cluster))
+
+write.csv(three_way_sig,
+          paste0(save_pathP4, "P4_ThreeWay_Markers_sig.csv"),
+          row.names = FALSE)
+
+cat("Three-way DE analysis complete\n")
+```
+
+# ============================================
+# FIGURE 7F: Dotplot Tissue Category Top Markers
+# ============================================
+```{r figure_7F}
+cat("\n=== FIGURE 7F: Dotplot Top Markers ===\n")
+
+# Get top 5 genes per cluster
+top_genes_per_cluster <- three_way_sig %>%
+  group_by(cluster) %>%
+  slice_max(order_by = avg_log2FC, n = 5) %>%
+  ungroup()
+
+genes_to_plot <- unique(top_genes_per_cluster$gene)
+
+# Create subset without NA values
+p4_subset_clean <- subset(p4_subset, subset = !is.na(tissue_category))
+
+p_dotplot <- DotPlot(
+  p4_subset_clean, 
+  features = genes_to_plot, 
+  col.min = 0, 
+  group.by = "tissue_category", 
+  cluster.idents = TRUE
+) +
+  coord_flip() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave(paste0(save_pathP4, "7_F_dotplot_Tissue_category_top_markers.pdf"), 
+       p_dotplot, width = 5, height = 6)
+
+cat("Figure 7F complete: Dotplot saved\n")
+```
+
+# ============================================
+# FIGURE 7G: Scatterpie Area 1 vs Area 7
+# ============================================
+```{r figure_7G}
+cat("\n=== FIGURE 7G: Scatterpie Plot ===\n")
+
+# Get spatial coordinates
+coords <- GetTissueCoordinates(p4_subset)
+meta <- p4_subset@meta.data
+spatial_data <- cbind(coords, meta)
+
+# Filter for specific areas
+spatial_data_subset <- spatial_data %>%
+  filter(area_label %in% c("Organized_Granulomas_Area_1", "Diffuse_Immune_Area_7"))
+
+cat("\n=== Selected Areas Summary ===\n")
+print(table(spatial_data_subset$area_label))
+
+# Get top 10 cell types
+celltype_cols_exist <- celltypes[celltypes %in% colnames(spatial_data_subset)]
+
+top_celltypes <- spatial_data_subset %>%
+  select(all_of(celltype_cols_exist)) %>%
+  summarise(across(everything(), mean, na.rm = TRUE)) %>%
+  pivot_longer(everything(), names_to = "celltype", values_to = "mean_prop") %>%
+  arrange(desc(mean_prop)) %>%
+  head(10) %>%
+  pull(celltype)
+
+cat("\n=== Top 10 Cell Types ===\n")
+print(top_celltypes)
+
+# Create scatterpie plot
+p_scatterpie <- ggplot() +
+  geom_scatterpie(
+    aes(x = x, y = y, group = area_label, r = 100),
+    data = spatial_data_subset,
+    cols = top_celltypes,
+    alpha = 0.8
+  ) +
+  scale_fill_manual(
+    values = celltype_colors[top_celltypes],
+    name = "Cell Type"
+  ) +
+  facet_wrap(~area_label, ncol = 2) +
+  coord_equal() +
+  labs(title = "Cell Type Composition: Organized vs Diffuse Areas") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+    legend.position = "right",
+    legend.text = element_text(size = 9),
+    strip.text = element_text(face = "bold", size = 11),
+    strip.background = element_rect(fill = "gray90"),
+    axis.text = element_text(size = 8)
+  )
+
+ggsave(paste0(save_pathP4, "7_G_P4_Scatterpie_OrgArea1_vs_DiffArea7.pdf"),
+       p_scatterpie, width = 6, height = 4)
+
+cat("Figure 7G complete: Scatterpie plot saved\n")
+```
+
+# ============================================
+# FIGURE 7H: Heatmap Top 10 Cell Types by Category
+# ============================================
+```{r figure_7H}
+cat("\n=== FIGURE 7H: Cell Type Composition Heatmap ===\n")
+
+# Calculate mean proportions per category
+meta_with_celltypes <- p4_subset_clean@meta.data %>%
+  select(tissue_category, all_of(celltypes))
+
+celltype_by_category <- meta_with_celltypes %>%
+  group_by(tissue_category) %>%
+  summarise(across(all_of(celltypes), mean, na.rm = TRUE)) %>%
+  pivot_longer(cols = -tissue_category, 
+               names_to = "celltype", 
+               values_to = "mean_proportion")
+
+# Pivot to matrix format
+celltype_matrix <- celltype_by_category %>%
+  pivot_wider(names_from = tissue_category, 
+              values_from = mean_proportion) %>%
+  column_to_rownames("celltype") %>%
+  as.matrix()
+
+# Reorder columns
+celltype_matrix <- celltype_matrix[, c("Uninvolved", "Diffuse_Immune", "Organized_Granulomas")]
+
+# Get top 10 cell types
+mean_proportions <- rowMeans(celltype_matrix)
+top10_celltypes <- names(sort(mean_proportions, decreasing = TRUE))[1:10]
+
+cat("\n=== Top 10 Cell Types ===\n")
+print(data.frame(
+  CellType = top10_celltypes,
+  Mean_Proportion = sort(mean_proportions, decreasing = TRUE)[1:10]
+))
+
+# Filter matrix to top 10
+celltype_matrix_top10 <- celltype_matrix[top10_celltypes, ]
+
+# Save proportions
+write.csv(celltype_matrix_top10, 
+          paste0(save_pathP4, "P4_CellType_Proportions_Top10_by_Category.csv"))
+
+# Filter and prepare for heatmap
+celltype_matrix_filtered <- celltype_matrix_top10[rowSums(celltype_matrix_top10) > 0.001, ]
+celltype_matrix_filtered <- celltype_matrix_filtered + 1e-6
+
+# Color mapping
+celltype_color_vec <- celltype_colors[rownames(celltype_matrix_filtered)]
+celltype_color_vec <- celltype_color_vec[!is.na(celltype_color_vec)]
+
+# Row annotation
+row_ha <- rowAnnotation(
+  CellType = rownames(celltype_matrix_filtered),
+  col = list(CellType = celltype_color_vec),
+  show_annotation_name = FALSE,
+  show_legend = FALSE
+)
+
+# Color function
+col_fun_unscaled <- colorRamp2(
+  c(0, max(celltype_matrix_filtered) / 2, max(celltype_matrix_filtered)),
+  c("white", "#FED976", "#E31A1C")
+)
+
+# Create heatmap
+pdf(paste0(save_pathP4, "7_H_P4_CellType_Heatmap_Top10_Unscaled.pdf"), 
+    width = 8, height = 8)
+
+ht_unscaled <- Heatmap(
+  celltype_matrix_filtered,
+  name = "Mean\nProportion",
+  col = col_fun_unscaled,
+  cluster_rows = TRUE,
+  cluster_columns = FALSE,
+  show_row_names = TRUE,
+  show_column_names = TRUE,
+  row_names_gp = gpar(fontsize = 10),
+  column_names_gp = gpar(fontsize = 11, fontface = "bold"),
+  column_title = "P4_L: Top 10 Cell Types by Tissue Category",
+  column_title_gp = gpar(fontsize = 13, fontface = "bold"),
+  right_annotation = row_ha,
+  cell_fun = function(j, i, x, y, width, height, fill) {
+    grid.text(sprintf("%.3f", celltype_matrix_filtered[i, j]), 
+              x, y, gp = gpar(fontsize = 8))
+  },
+  heatmap_legend_param = list(
+    title = "Mean\nProportion",
+    title_gp = gpar(fontsize = 10, fontface = "bold"),
+    labels_gp = gpar(fontsize = 9),
+    grid_height = unit(4, "mm"),
+    grid_width = unit(4, "mm")
+  )
+)
+
+draw(ht_unscaled, heatmap_legend_side = "right")
+dev.off()
+
+cat("Figure 7H complete: Heatmap saved\n")
+```
+
+# ============================================
+# GRANULOMA SUBCLUSTERING ANALYSIS
+# ============================================
+```{r granuloma_subclustering}
+cat("\n=== GRANULOMA SUBCLUSTERING ANALYSIS ===\n")
+
+# Subset organized granulomas
+p4_granulomas <- subset(p4_subset, 
+                        subset = tissue_category == "Organized_Granulomas")
+
+cat("\n=== Organized Granulomas Subset ===\n")
+cat("Total spots:", ncol(p4_granulomas), "\n")
+
+# Normalize and process
+p4_granulomas <- NormalizeData(p4_granulomas)
+p4_granulomas <- FindVariableFeatures(p4_granulomas, 
+                                      selection.method = "vst", 
+                                      nfeatures = 2000)
+p4_granulomas <- ScaleData(p4_granulomas)
+p4_granulomas <- RunPCA(p4_granulomas, npcs = 50, verbose = FALSE)
+
+# Elbow plot
+pdf(paste0(save_pathP4, "P4_Granulomas_ElbowPlot.pdf"), width = 8, height = 6)
+ElbowPlot(p4_granulomas, ndims = 50)
+dev.off()
+
+# Run UMAP and clustering
+dims_to_use <- 1:10
+resolutions_to_test <- c(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.2)
+
+# Run UMAP
+p4_granulomas <- RunUMAP(p4_granulomas, 
+                         dims = dims_to_use, 
+                         reduction.name = "umap_dims1_10",
+                         reduction.key = "UMAPdims1_10_",
+                         verbose = FALSE)
+
+# Find neighbors
+p4_granulomas <- FindNeighbors(p4_granulomas, 
+                               dims = dims_to_use,
+                               verbose = FALSE)
+
+# Test resolutions
+for (res in resolutions_to_test) {
+  cluster_name <- paste0("clusters_dims1_10_res", res)
+  
+  p4_granulomas <- FindClusters(p4_granulomas, 
+                                resolution = res,
+                                verbose = FALSE)
+  
+  p4_granulomas@meta.data[[cluster_name]] <- Idents(p4_granulomas)
+  
+  cat(sprintf("\nres=%s: %d clusters\n", res, 
+              length(unique(Idents(p4_granulomas)))))
+}
+
+# Select best resolution (res = 1.0)
+best_cluster_col <- "clusters_dims1_10_res1"
+Idents(p4_granulomas) <- best_cluster_col
+
+cat("\n=== Selected clustering: ===\n")
+cat("Column:", best_cluster_col, "\n")
+cat("Number of clusters:", length(unique(Idents(p4_granulomas))), "\n")
+print(table(Idents(p4_granulomas)))
+
+# Find cluster markers
+cluster_markers <- FindAllMarkers(
+  p4_granulomas, 
+  group.by = best_cluster_col, 
+  logfc.threshold = 0.5, 
+  min.pct = 0.1, 
+  only.pos = TRUE
+)
+
+sig_cluster_markers <- cluster_markers %>%
+  filter(p_val_adj < 0.05)
+
+write.csv(sig_cluster_markers,
+          paste0(save_pathP4, "P4_granulomas_cluster_markers_res1.csv"),
+          row.names = FALSE)
+
+# Create cluster annotation based on marker expression
+p4_granulomas$gran_clusters <- case_when(
+  p4_granulomas$clusters_dims1_10_res1 == "0" ~ "Plasma_cytotoxic",
+  p4_granulomas$clusters_dims1_10_res1 == "1" ~ "Fibrotic_core",
+  p4_granulomas$clusters_dims1_10_res1 == "2" ~ "T_DC_zone",
+  p4_granulomas$clusters_dims1_10_res1 == "3" ~ "Lipid_mac",
+  TRUE ~ as.character(p4_granulomas$clusters_dims1_10_res1)
+)
+
+cat("\n=== Annotated Cluster Distribution ===\n")
+print(table(p4_granulomas$gran_clusters))
+
+cat("Granuloma subclustering complete\n")
+```
+
+# ============================================
+# FIGURE 7I: UMAP Granuloma Clusters
+# ============================================
+```{r figure_7I}
+cat("\n=== FIGURE 7I: UMAP Granuloma Clusters ===\n")
+
+p_umap <- DimPlot(
+  p4_granulomas,
+  reduction = "umap_dims1_10",
+  group.by = "gran_clusters",
+  label = TRUE,
+  label.size = 5,
+  pt.size = 4,
+  cols = c(
+    "Plasma_cytotoxic" = "#E64B35",
+    "Fibrotic_core" = "#4DBBD5",
+    "Lipid_mac" = "#F39B7F",
+    "T_DC_zone" = "#6B8E23"
+  )
+) +
+  labs(title = "P4_L: Granuloma Zones - UMAP") +
+  theme_classic()
+
+ggsave(paste0(save_pathP4, "7_I_P4_granuloma_UMAP.pdf"),
+       p_umap, width = 10, height = 8)
+
+cat("Figure 7I complete: UMAP saved\n")
+```
+
+# ============================================
+# FIGURE 7J: Spatial Plot Granuloma Clusters
+# ============================================
+```{r figure_7J}
+cat("\n=== FIGURE 7J: Spatial Plot Granuloma Clusters ===\n")
+
+p_spatial <- SpatialDimPlot(
+  p4_granulomas,
+  group.by = "gran_clusters",
+  pt.size.factor = 2,
+  crop = FALSE,
+  cols = c(
+    "Plasma_cytotoxic" = "#E64B35",
+    "Fibrotic_core" = "#4DBBD5",
+    "Lipid_mac" = "#F39B7F",
+    "T_DC_zone" = "#6B8E23"
+  )
+) +
+  labs(title = "P4_L: Granuloma Zones - Spatial") +
+  theme(legend.position = "right")
+
+ggsave(paste0(save_pathP4, "7_J_P4_granuloma_clusters_spatial.pdf"),
+       p_spatial, width = 12, height = 10)
+
+cat("Figure 7J complete: Spatial plot saved\n")
+```
+
+# ============================================
+# FIGURE 7K: Stacked Violin Plot Key Markers
+# ============================================
+```{r figure_7K}
+cat("\n=== FIGURE 7K: Stacked Violin Plot Key Markers ===\n")
+
+# Define key markers per compartment
+key_markers <- c(
+  "BIRC3", "LILRB5",  # Macrophages
+  "CXCL9", "CYP27A1",  # M1
+  "CHI3L1", "MMP9",   # M2
+  "LIPA", "APOE",   # Lipid
+  "CCL19", "IL7R",  # Organized
+  "KLRK1", "GNLY",  # NK/Cytotoxic
+  "AEBP1", "LOX", "COL1A1", 
+  "IGHG1", "JCHAIN", "PRF1", 
+  "SELL", "MKI67"
+)
+
+# Check which markers are present
+key_markers_present <- key_markers[key_markers %in% rownames(p4_granulomas)]
+
+cat("\n=== Markers Present ===\n")
+cat("Markers found:", length(key_markers_present), "/", length(key_markers), "\n")
+
+# Create stacked violin plot
+p_stacked <- StackedVlnPlot(
+  p4_granulomas, 
+  key_markers_present, 
+  group.by = "gran_clusters"
+)
+
+ggsave(paste0(save_pathP4, "7_K_stacked_vln_plot_keymarkers.pdf"), 
+       p_stacked, height = 15, width = 5)
+
+cat("Figure 7K complete: Stacked violin plot saved\n")
+```
+
+# ============================================
+# FIGURE 7L: Spatial Features Organized Area 1
+# ============================================
+```{r figure_7L}
+cat("\n=== FIGURE 7L: Spatial Feature Plots ===\n")
+
+# Subset to Organized Area 1
+p4_org_area1 <- subset(p4_subset, subset = area_label == "Organized_Granulomas_Area_1")
+
+cat("\n=== Organized Area 1 Subset ===\n")
+cat("Total spots in Area 1:", ncol(p4_org_area1), "\n")
+
+# Create spatial feature plots
+pdf(paste0(save_pathP4, "7_L_P4_OrganizedArea1_SpatialFeatures.pdf"), 
+    width = 16, height = 20)
+
+SpatialFeaturePlot(
+  p4_org_area1,
+  features = key_markers_present,
+  pt.size.factor = 30,
+  alpha = c(0.1, 1),
+  ncol = 3,
+  image.alpha = 0.6,
+  stroke = 0, 
+  keep.scale = "all"
+) & 
+  theme(
+    legend.position = "right",
+    legend.text = element_text(size = 8)
+  )
+
+dev.off()
+
+cat("Figure 7L complete: Spatial feature plots saved\n")
+```
+
+# ============================================
+# SUPPLEMENTARY FIGURE S6A: Heatmap Top 50 Genes
+# ============================================
+```{r figure_S6A}
+cat("\n=== SUPPLEMENTARY FIGURE S6A: Annotated Heatmap ===\n")
+
+# Get top 50 upregulated genes
+top_genes_UP_p4 <- sig_genes_p4 %>%
+  slice_max(order_by = avg_log2FC, n = 50) %>%
+  pull(gene)
+
+# Scale data
+integrated_Eth_cohort_filteredL <- ScaleData(
+  integrated_Eth_cohort_filteredL, 
+  features = top_genes_UP_p4
+)
+mat_UP_p4 <- GetAssayData(integrated_Eth_cohort_filteredL, slot = "scale.data")[top_genes_UP_p4, ]
+
+# Categorize genes
+gene_category_p4 <- sapply(top_genes_UP_p4, function(gene) {
+  if (gene %in% c("MARCO", "CLEC10A", "MS4A6A", "MRC1", "CD163")) {
+    return("M2 Macrophage")
+  } else if (gene %in% c("PLA2G2A", "PLA2G2D", "PLTP", "APOE", "FABP5", "SLC40A1")) {
+    return("Lipid Metabolism")
+  } else if (gene %in% c("CTSH", "CTSZ", "MAN2B1", "MPEG1", "TMEM176B")) {
+    return("Lysosomal")
+  } else if (gene %in% c("FN1", "MFAP5", "FSTL1", "TGFBI", "TNXB", "CRIP1", "CCDC80", "TIMP1", "TIMP3", "CLEC3B", "IGFBP6")) {
+    return("ECM/Remodeling")
+  } else if (gene %in% c("C3", "SERPING1", "FGL2")) {
+    return("Protease/Complement")
+  } else if (gene %in% c("HLA-DPA1", "HLA-DMB", "CD4", "IRF8")) {
+    return("MHC-II/APC")
+  } else if (gene %in% c("CXCL9", "CXCL14", "TRAC", "FYB1", "PLEK", "LCP1")) {
+    return("Chemokine/Immune")
+  } else {
+    return("Other")
+  }
+})
+
+# Define category colors
+category_colors <- c(
+  "M2 Macrophage" = "#E64B35",
+  "Lipid Metabolism" = "#4DBBD5",
+  "Lysosomal" = "#00A087",
+  "ECM/Remodeling" = "#F39B7F",
+  "Protease/Complement" = "#8491B4",
+  "MHC-II/APC" = "#3C5488",
+  "Chemokine/Immune" = "#91D1C2",
+  "Other" = "gray80"
+)
+
+# Column annotation
+col_anno_p4 <- HeatmapAnnotation(
+  Patient = integrated_Eth_cohort_filteredL$sample_id,
+  Comparison = integrated_Eth_cohort_filteredL$comparison_P4,
+  col = list(
+    Patient = patient_colors,
+    Comparison = c("P4_L" = "#00B0F6", "Others" = "gray80")
+  )
+)
+
+# Row annotation
+row_anno_p4 <- rowAnnotation(
+  Category = gene_category_p4,
+  col = list(Category = category_colors),
+  annotation_name_gp = gpar(fontsize = 10)
+)
+
+# Create heatmap
+ht_anno_p4 <- Heatmap(
+  mat_UP_p4,
+  name = "Scaled\nExpression",
+  top_annotation = col_anno_p4,
+  right_annotation = row_anno_p4,
+  show_column_names = FALSE,
+  show_row_names = TRUE,
+  row_names_gp = gpar(fontsize = 8),
+  cluster_columns = TRUE,
+  cluster_rows = TRUE,
+  col = colorRamp2(c(0, 2), c("white", "#B2182B")),
+  column_split = integrated_Eth_cohort_filteredL$comparison_P4,
+  row_split = gene_category_p4,
+  border = TRUE,
+  column_title = "P4_L vs Others - Top 50 Upregulated Genes (Annotated)",
+  column_title_gp = gpar(fontsize = 14, fontface = "bold"),
+  row_title_rot = 0,
+  row_gap = unit(2, "mm"),
+  column_gap = unit(3, "mm")
+)
+
+pdf(paste0(save_pathP4, "S6_A_P4_annotated_heatmap_top50.pdf"), 
+    width = 14, height = 14)
+draw(ht_anno_p4)
+dev.off()
+
+cat("Supplementary Figure S6A complete: Heatmap saved\n")
+```
+
+# ============================================
+# SUPPLEMENTARY FIGURE S6B: Cell Type Enrichment Statistics
+# ============================================
+```{r figure_S6B}
+cat("\n=== SUPPLEMENTARY FIGURE S6B: Cell Type Enrichment ===\n")
+
+# Prepare data for statistical testing
+meta_for_stats <- p4_subset_clean@meta.data %>%
+  select(tissue_category, all_of(top10_celltypes)) %>%
+  pivot_longer(cols = all_of(top10_celltypes),
+               names_to = "celltype",
+               values_to = "proportion")
+
+# Kruskal-Wallis test
+kruskal_results <- meta_for_stats %>%
+  group_by(celltype) %>%
+  kruskal_test(proportion ~ tissue_category) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance("p.adj")
+
+cat("\n=== Kruskal-Wallis Results ===\n")
+print(kruskal_results)
+
+# Pairwise Wilcoxon tests
+pairwise_results <- meta_for_stats %>%
+  group_by(celltype) %>%
+  wilcox_test(proportion ~ tissue_category, 
+              paired = FALSE,
+              p.adjust.method = "BH") %>%
+  add_significance("p.adj") %>%
+  add_xy_position(x = "tissue_category")
+
+pairwise_results_clean <- as.data.frame(pairwise_results) %>%
+  select(-groups)
+
+# Calculate fold changes
+mean_props <- meta_for_stats %>%
+  group_by(celltype, tissue_category) %>%
+  summarise(mean_prop = mean(proportion, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = tissue_category, 
+              values_from = mean_prop)
+
+fold_changes <- mean_props %>%
+  mutate(
+    FC_Diffuse_vs_Uninvolved = (Diffuse_Immune + 1e-6) / (Uninvolved + 1e-6),
+    FC_Granulomas_vs_Uninvolved = (Organized_Granulomas + 1e-6) / (Uninvolved + 1e-6),
+    FC_Granulomas_vs_Diffuse = (Organized_Granulomas + 1e-6) / (Diffuse_Immune + 1e-6),
+    log2FC_Diffuse_vs_Uninvolved = log2(FC_Diffuse_vs_Uninvolved),
+    log2FC_Granulomas_vs_Uninvolved = log2(FC_Granulomas_vs_Uninvolved),
+    log2FC_Granulomas_vs_Diffuse = log2(FC_Granulomas_vs_Diffuse)
+  )
+
+# Combine results
+enrichment_summary <- kruskal_results %>%
+  select(celltype, statistic, p, p.adj, p.adj.signif) %>%
+  left_join(fold_changes, by = "celltype") %>%
+  arrange(p.adj)
+
+write.csv(enrichment_summary, 
+          paste0(save_pathP4, "P4_CellType_Enrichment_Summary.csv"),
+          row.names = FALSE)
+
+# Violin plots for top significant cell types
+top_sig_celltypes <- kruskal_results %>%
+  filter(p.adj < 0.05) %>%
+  arrange(p.adj) %>%
+  slice_head(n = 6) %>%
+  pull(celltype)
+
+p4_subset_clean$tissue_category <- factor(
+  p4_subset_clean$tissue_category,
+  levels = c("Uninvolved", "Diffuse_Immune", "Organized_Granulomas")
+)
+Idents(p4_subset_clean) <- "tissue_category"
+
+p_vln <- VlnPlot(
+  p4_subset_clean,
+  features = top_sig_celltypes,
+  cols = c("Uninvolved" = "#2166AC", 
+           "Diffuse_Immune" = "#FED976", 
+           "Organized_Granulomas" = "#E31A1C"),
+  pt.size = 0,
+  ncol = 3
+) + 
+  geom_boxplot(width = 0.1)
+
+ggsave(paste0(save_pathP4, "S6_B_P4_CellType_Enrichment_ViolinPlots.pdf"),
+       p_vln, width = 14, height = 10)
+
+cat("Supplementary Figure S6B complete: Violin plots and statistics saved\n")
+```
+
+# ============================================
+# SUPPLEMENTARY FIGURE S6C: Granuloma Cluster Markers
+# ============================================
+```{r figure_S6C}
+cat("\n=== SUPPLEMENTARY FIGURE S6C: Granuloma Cluster Markers ===\n")
+
+# Define marker genes
+marker_genes <- list(
+  Core_Epithelioid = c("CD68", "CD163", "MRC1", "C1QA", "C1QB", "APOE", "TREM2"),
+  M1_Inflammatory = c("IL1B", "TNF", "CXCL9", "CXCL10", "CXCL11", "IDO1", "GBP1", "GBP5", "WARS"),
+  M2_Repair = c("CCL18", "CCL17", "MMP9"),
+  Lipid_Metabolism = c("FABP4", "FABP5", "PLIN2", "PLIN3", "LIPA", "ABCA1", "ABCG1", "CHI3L1", "APOE"),
+  Lymphoid_Like = c("CCL19"),
+  T_Cell = c("CD3D", "CD3E", "CD4", "CD8A", "CD8B", "GZMB", "PRF1", "IFNG", "PDCD1"),
+  B_Plasma = c("CD79A", "MS4A1", "CD19", "SDC1", "JCHAIN", "IGHG1", "IGHM", "IGHA1", "MZB1", "XBP1"),
+  Neutrophils = c("S100A8", "S100A9", "S100A12"),
+  Fibrosis = c("COL1A1", "COL1A2", "COL3A1", "FN1", "POSTN", "ACTA2", "TGFB1", "TIMP1", "MMP2")
+)
+
+# Flatten and check availability
+all_markers <- unique(unlist(marker_genes))
+genes_present_unique <- unique(all_markers[all_markers %in% rownames(p4_granulomas)])
+
+cat("\nMarkers present:", length(genes_present_unique), "/", length(all_markers), "\n")
+
+# Create dotplot
+pdf(paste0(save_pathP4, "S6_C_P4_Granulomas_DotPlot_Markers_labelled.pdf"), 
+    width = 16, height = 12)
+
+DotPlot(
+  p4_granulomas, 
+  group.by = "gran_clusters",
+  features = genes_present_unique,
+  cols = c("lightgrey", "red"),
+  dot.scale = 8,
+  col.min = 0, 
+  cluster.idents = TRUE
+) +
+  coord_flip() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 9),
+    axis.title = element_text(size = 12, face = "bold"),
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5)
+  ) +
+  ggtitle("P4_L: Marker Expression in Organized Granulomas")
+
+dev.off()
+
+cat("Supplementary Figure S6C complete: Dotplot saved\n")
+```
+
+
+# ============================================
+# SUPPLEMENTARY FIGURE S6D: P3 vs P4 Granuloma Comparison
+# ============================================
+```{r figure_S6D}
+cat("\n=== SUPPLEMENTARY FIGURE S6D: P3 vs P4 Granuloma DE Analysis ===\n")
+
+# ============================================
+# IMPORT P3 GRANULOMA ANNOTATIONS
+# ============================================
+
+# Define P3 granuloma CSV path
+p3_granuloma_csv <- paste0(study_path, "V12N28-391/PK_391_4_4_run/outs/P3_GRANULOMAS.csv")
+
+# Import P3 manual granuloma annotations
+P3_manual_granulomas <- read.csv(p3_granuloma_csv)
+
+cat("\n=== P3 Granulomas CSV Summary ===\n")
+cat("Total granuloma spots:", nrow(P3_manual_granulomas), "\n")
+cat("Granuloma regions identified:", length(unique(P3_manual_granulomas$granuloma)), "\n")
+print(table(P3_manual_granulomas$granuloma))
+
+# Initialize P3 annotation columns in integrated object
+integrated_Eth_cohort_filteredL$P3_manual_region <- "Non-granuloma"
+integrated_Eth_cohort_filteredL$P3_granuloma_id <- NA
+
+# Get spot IDs
+spot_ids <- rownames(integrated_Eth_cohort_filteredL@meta.data)
+
+# Find P3_L-specific suffix
+P3_barcodes <- spot_ids[integrated_Eth_cohort_filteredL$sample_id == "P3_L"]
+
+if (length(P3_barcodes) == 0) {
+  stop("ERROR: No P3_L samples found in the integrated object!")
+}
+
+cat("\n=== Checking P3 barcode formats ===\n")
+cat("Example P3_L barcode:", head(P3_barcodes, 1), "\n")
+cat("Example CSV barcode:", head(P3_manual_granulomas$Barcode, 1), "\n")
+
+# Add suffix if needed
+if (grepl("_\\d+$", P3_barcodes[1]) && !grepl("_\\d+$", P3_manual_granulomas$Barcode[1])) {
+  P3_suffix <- regmatches(P3_barcodes[1], regexpr("_\\d+$", P3_barcodes[1]))
+  cat("Using P3_L-specific suffix:", P3_suffix, "\n")
+  P3_manual_granulomas$Barcode_full <- paste0(P3_manual_granulomas$Barcode, P3_suffix)
+} else {
+  P3_manual_granulomas$Barcode_full <- P3_manual_granulomas$Barcode
+}
+
+# Vectorized matching
+match_idx <- match(P3_manual_granulomas$Barcode_full, spot_ids)
+valid_matches <- !is.na(match_idx)
+
+# Update annotations
+integrated_Eth_cohort_filteredL$P3_manual_region[match_idx[valid_matches]] <- "Granuloma"
+integrated_Eth_cohort_filteredL$P3_granuloma_id[match_idx[valid_matches]] <- 
+  P3_manual_granulomas$granuloma[valid_matches]
+
+matched_count <- sum(valid_matches)
+
+cat("\n=== P3 Manual Granuloma Annotation Summary ===\n")
+cat("Total spots in P3_L:", sum(integrated_Eth_cohort_filteredL$sample_id == "P3_L"), "\n")
+cat("Granuloma spots matched:", matched_count, "\n")
+
+# Verify
+P3_granuloma_count <- sum(integrated_Eth_cohort_filteredL$P3_manual_region == "Granuloma" & 
+                          integrated_Eth_cohort_filteredL$sample_id == "P3_L")
+cat("✓ P3 granulomas found:", P3_granuloma_count, "\n")
+
+# ============================================
+# IMPORT P4 GRANULOMA ANNOTATIONS
+# ============================================
+
+# Import P4 organized granulomas (reuse from earlier if already loaded)
+organized_gran <- read.csv(paste0(tissue_csv_base, "Organized_Granulomas_v2.csv"))
+
+cat("\n=== P4 Organized Granulomas CSV Summary ===\n")
+cat("Total granuloma spots:", nrow(organized_gran), "\n")
+
+# Extract P4 granuloma barcodes
+p4_granuloma_barcodes <- organized_gran$Barcode[!is.na(organized_gran$Organized_Granulomas)]
+
+# Initialize P4 annotation columns
+integrated_Eth_cohort_filteredL$P4_manual_region <- "Non-granuloma"
+integrated_Eth_cohort_filteredL$P4_granuloma_id <- NA
+
+# Find P4_L-specific suffix
+P4_barcodes <- spot_ids[integrated_Eth_cohort_filteredL$sample_id == "P4_L"]
+
+if (length(P4_barcodes) == 0) {
+  stop("ERROR: No P4_L samples found!")
+}
+
+cat("\n=== Checking P4 barcode formats ===\n")
+cat("Example P4_L barcode:", head(P4_barcodes, 1), "\n")
+cat("Example CSV barcode:", head(p4_granuloma_barcodes, 1), "\n")
+
+# Add suffix if needed
+if (grepl("_\\d+$", P4_barcodes[1]) && !grepl("_\\d+$", p4_granuloma_barcodes[1])) {
+  P4_suffix <- regmatches(P4_barcodes[1], regexpr("_\\d+$", P4_barcodes[1]))
+  cat("Using P4_L-specific suffix:", P4_suffix, "\n")
+  p4_granuloma_full <- paste0(p4_granuloma_barcodes, P4_suffix)
+} else {
+  p4_granuloma_full <- p4_granuloma_barcodes
+}
+
+# Vectorized matching
+match_idx <- match(p4_granuloma_full, spot_ids)
+valid_matches <- !is.na(match_idx)
+
+# Update annotations
+integrated_Eth_cohort_filteredL$P4_manual_region[match_idx[valid_matches]] <- "Granuloma"
+integrated_Eth_cohort_filteredL$P4_granuloma_id[match_idx[valid_matches]] <- 1
+
+matched_count <- sum(valid_matches)
+
+cat("\n=== P4 Manual Granuloma Annotation Summary ===\n")
+cat("Total spots in P4_L:", sum(integrated_Eth_cohort_filteredL$sample_id == "P4_L"), "\n")
+cat("Granuloma spots matched:", matched_count, "\n")
+
+# Verify
+P4_granuloma_count <- sum(integrated_Eth_cohort_filteredL$P4_manual_region == "Granuloma" & 
+                          integrated_Eth_cohort_filteredL$sample_id == "P4_L")
+cat("✓ P4 granulomas found:", P4_granuloma_count, "\n")
+
+# ============================================
+# DIFFERENTIAL EXPRESSION: P4 vs P3 GRANULOMAS
+# ============================================
+
+cat("\n=== Creating Combined Granuloma Labels ===\n")
+
+# Create combined granuloma identifier
+integrated_Eth_cohort_filteredL$granuloma_sample <- NA
+
+# Label P3_L granulomas
+integrated_Eth_cohort_filteredL$granuloma_sample[
+  integrated_Eth_cohort_filteredL$P3_manual_region == "Granuloma" & 
+  integrated_Eth_cohort_filteredL$sample_id == "P3_L"
+] <- "P3_Granuloma"
+
+# Label P4_L granulomas
+integrated_Eth_cohort_filteredL$granuloma_sample[
+  integrated_Eth_cohort_filteredL$P4_manual_region == "Granuloma" & 
+  integrated_Eth_cohort_filteredL$sample_id == "P4_L"
+] <- "P4_Granuloma"
+
+# Check counts
+cat("\nGranuloma spot counts:\n")
+print(table(integrated_Eth_cohort_filteredL$granuloma_sample, useNA = "ifany"))
+
+# Subset to only granuloma spots
+granuloma_subset <- subset(
+  integrated_Eth_cohort_filteredL, 
+  subset = granuloma_sample %in% c("P3_Granuloma", "P4_Granuloma")
+)
+
+cat("\nTotal granuloma spots for DE analysis:", ncol(granuloma_subset), "\n")
+cat("P3_L granulomas:", sum(granuloma_subset$granuloma_sample == "P3_Granuloma"), "\n")
+cat("P4_L granulomas:", sum(granuloma_subset$granuloma_sample == "P4_Granuloma"), "\n")
+
+# Prepare for DE
+Idents(granuloma_subset) <- "granuloma_sample"
+granuloma_subset <- PrepSCTFindMarkers(granuloma_subset)
+
+# Run differential expression
+cat("\n=== Running Differential Expression (P4 vs P3) ===\n")
+
+DE_P4_vs_P3 <- FindMarkers(
+  granuloma_subset,
+  ident.1 = "P4_Granuloma",
+  ident.2 = "P3_Granuloma",
+  test.use = "wilcox",
+  logfc.threshold = 0.5,
+  min.pct = 0.1,
+  verbose = TRUE
+)
+
+# Add gene names and reorder
+DE_P4_vs_P3$gene <- rownames(DE_P4_vs_P3)
+DE_P4_vs_P3 <- DE_P4_vs_P3[, c("gene", "p_val", "avg_log2FC", "pct.1", "pct.2", "p_val_adj")]
+DE_P4_vs_P3 <- DE_P4_vs_P3[order(DE_P4_vs_P3$p_val_adj), ]
+
+# Filter significant genes
+DE_P4_vs_P3_sig <- DE_P4_vs_P3 %>%
+  filter(p_val_adj < 0.05)
+
+# Summary
+cat("\n=== Differential Expression Summary ===\n")
+cat("Total genes tested:", nrow(DE_P4_vs_P3), "\n")
+cat("Significant genes (p_adj < 0.05):", sum(DE_P4_vs_P3$p_val_adj < 0.05), "\n")
+cat("Upregulated in P4 (log2FC > 0.5, p_adj < 0.05):", 
+    sum(DE_P4_vs_P3$avg_log2FC > 0.5 & DE_P4_vs_P3$p_val_adj < 0.05), "\n")
+cat("Downregulated in P4 (log2FC < -0.5, p_adj < 0.05):", 
+    sum(DE_P4_vs_P3$avg_log2FC < -0.5 & DE_P4_vs_P3$p_val_adj < 0.05), "\n")
+
+# Save results
+write.csv(DE_P4_vs_P3_sig, 
+          paste0(save_pathP4, "DE_P4_vs_P3_Granulomas.csv"), 
+          row.names = FALSE)
+
+# ============================================
+# VOLCANO PLOT
+# ============================================
+
+# Create significance categories
+DE_P4_vs_P3$significant <- case_when(
+  DE_P4_vs_P3$avg_log2FC > 0.5 & DE_P4_vs_P3$p_val_adj < 0.05 ~ "Up in P4",
+  DE_P4_vs_P3$avg_log2FC < -0.5 & DE_P4_vs_P3$p_val_adj < 0.05 ~ "Up in P3",
+  TRUE ~ "Not Sig"
+)
+
+# Get top genes from each direction for labeling
+top_up <- DE_P4_vs_P3 %>%
+  filter(avg_log2FC > 0.5, p_val_adj < 0.05) %>%
+  arrange(desc(abs(avg_log2FC))) %>%
+  head(10) %>%
+  pull(gene)
+
+top_down <- DE_P4_vs_P3 %>%
+  filter(avg_log2FC < -0.5, p_val_adj < 0.05) %>%
+  arrange(desc(abs(avg_log2FC))) %>%
+  head(10) %>%
+  pull(gene)
+
+top_genes <- c(top_up, top_down)
+
+DE_P4_vs_P3$gene_label <- ifelse(
+  DE_P4_vs_P3$gene %in% top_genes,
+  DE_P4_vs_P3$gene, 
+  ""
+)
+
+# Create volcano plot
+p_volcano <- ggplot(DE_P4_vs_P3, aes(x = avg_log2FC, y = -log10(p_val_adj), color = significant)) +
+  geom_point(alpha = 0.6, size = 1.5) +
+  scale_color_manual(
+    values = c(
+      "Up in P4" = "#E64B35", 
+      "Up in P3" = "#4DBBD5", 
+      "Not Sig" = "gray70"
+    )
+  ) +
+  geom_vline(xintercept = c(-0.5, 0.5), linetype = "dashed", color = "gray40") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "gray40") +
+  geom_text_repel(
+    data = subset(DE_P4_vs_P3, gene_label != ""),
+    aes(label = gene_label),
+    size = 3,
+    box.padding = 0.5,
+    max.overlaps = 50,
+    segment.color = "gray50",
+    fontface = "bold"
+  ) +
+  labs(
+    title = "Differential Expression: P4_L vs P3_L Granulomas",
+    x = "Log2 Fold Change (P4 vs P3)",
+    y = "-Log10(Adjusted P-value)",
+    color = ""
+  ) + 
+  theme_classic() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    legend.position = "top"
+  )
+
+ggsave(paste0(save_pathP4, "S6_D_Volcano_P4_vs_P3_Granulomas.pdf"), 
+       p_volcano, width = 6, height = 5)
+
+cat("Supplementary Figure S6D complete: P3 vs P4 granuloma comparison saved\n")
+```

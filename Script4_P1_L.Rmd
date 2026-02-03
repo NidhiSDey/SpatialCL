@@ -1,0 +1,814 @@
+---
+title: "P1_L Analysis - Figure 4, Supplementary Figure S3 and Table S4"
+output: html_document
+date: "2025-11-30"
+---
+
+# ============================================
+# SETUP AND LIBRARIES
+# ============================================
+```{r setup, include=FALSE}
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(tidyr)
+library(patchwork)
+library(ggpubr)
+library(pheatmap)
+library(ComplexHeatmap)
+library(circlize)
+library(RColorBrewer)
+library(viridis)
+library(rstatix)
+library(SCpubr)
+library(scatterpie)
+
+# Define study parameters
+study_name <- "ethiopian4mm_cohort"
+study_path <- "F:/SD23.9.2_Dioraphte_Ethiopian_4mm_ND23.09/"
+
+# Define samples (removed patient 5 lesion and non lesional)
+samples <- c("392_1_2", "392_1_4", "393_3_2", "393_3_4", 
+             "391_4_2", "391_4_4", "392_5_2", "392_5_4",
+             "391_7_2", "391_7_4")
+
+sample_group <- rep(c("healthy", "lesion"), 5)
+disease_group <- c("MCL", "healthy", "LCL", "healthy", "MCL", 
+                   "healthy", "LCL", "healthy", "DCL", "healthy")
+
+# Define paths
+read_path <- paste0(study_path, "R/No_P5/")
+save_pathL <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_sep/lesion/iteration_nov2025/")
+save_path <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_comb/")
+
+# Create directories if they don't exist 
+if(!dir.exists(save_pathL)) {
+  dir.create(save_pathL, recursive = TRUE)
+}
+
+# Create save directory for P1
+save_pathP1 <- paste0(save_pathL, "P1/test/")
+if(!dir.exists(save_pathP1)) {
+  dir.create(save_pathP1, recursive = TRUE)
+}
+```
+
+# ============================================
+# CUSTOM FUNCTIONS
+# ============================================
+```{r custom_functions}
+# Custom spatial visualization function with pie charts per spot
+create_custom_spatial_plot <- function(theta, pos, colors, title, topic_order, r = 50) {
+  library(ggplot2)
+  library(dplyr)
+  library(tidyr)
+  library(scatterpie)
+  
+  # Convert theta to dataframe and add position information
+  theta_df <- as.data.frame(theta)
+  theta_df$spot_id <- rownames(theta_df)
+  
+  pos_df <- as.data.frame(pos)
+  pos_df$spot_id <- rownames(pos_df)
+  
+  # Combine theta and position data
+  plot_data <- theta_df %>%
+    left_join(pos_df, by = "spot_id")
+  
+  # Get cell type columns (all columns except spot_id, x, y)
+  celltype_cols <- colnames(plot_data)[!colnames(plot_data) %in% c("spot_id", "x", "y")]
+  
+  # Order cell type columns according to topic_order
+  ordered_cols <- intersect(topic_order, celltype_cols)
+  
+  # Reorder columns in plot_data to match desired order
+  plot_data <- plot_data %>%
+    select(spot_id, x, y, all_of(ordered_cols))
+  
+  # Update celltype_cols to use ordered version
+  celltype_cols <- ordered_cols
+  
+  # Create ordered color palette matching the column order
+  ordered_colors <- colors[celltype_cols]
+  
+  # Create the plot with pie charts
+  p <- ggplot() +
+    geom_scatterpie(aes(x = x, y = y, r = r), 
+                    data = plot_data, 
+                    cols = celltype_cols,
+                    alpha = 0.8,
+                    color = NA) +
+    scale_fill_manual(values = ordered_colors, 
+                     breaks = celltype_cols,
+                     name = "Cell Types") +
+    theme_void() +
+    theme(
+      legend.position = "right",
+      legend.text = element_text(size = 8),
+      legend.title = element_text(size = 10, face = "bold"),
+      plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+      panel.background = element_rect(fill = "white", colour = "white"),
+      plot.background = element_rect(fill = "white", colour = "white")
+    ) +
+    labs(title = title) +
+    coord_fixed() +
+    guides(fill = guide_legend(override.aes = list(size = 3, alpha = 1)))
+  
+  return(p)
+}
+```
+
+# ============================================
+# LOAD DATA AND DEFINE COLORS
+# ============================================
+```{r load_data_and_setup}
+# Load lesion only integrated object (for P1_L vs other lesions comparison)
+integrated_Eth_cohort_filteredL <- readRDS(paste0(save_pathL, "Lesion_integrated_Eth_cohort_filtered_35stdeconvTopics_reclus_relabelled_COMBINED_dominantTopic_added.rds"))
+cat("Lesion-only object loaded:", ncol(integrated_Eth_cohort_filteredL), "spots\n")
+print(table(integrated_Eth_cohort_filteredL$sample_id))
+
+# Load lesion + non-lesion integrated object (for P1_L vs P1_H comparison)
+integrated_Eth_cohort_filtered <- readRDS(paste0(save_path, "Combined_integrated_Eth_cohort_obj_26top_domcell_added.rds"))
+cat("Combined object loaded:", ncol(integrated_Eth_cohort_filtered), "spots\n")
+print(table(integrated_Eth_cohort_filtered$sample_id))
+
+# Define cell types
+celltypes <- colnames(integrated_Eth_cohort_filteredL@meta.data)[69:103]
+
+# Define immune topics
+immune_topics <- c(
+  "IgM_Plasma", "IgA_Plasma", "Neuts", "memB", "Plasmablasts", 
+  "EarlyPlasma_APC", "Teff", "Tcyto", "Th1_DC", "Tcm_DC", "Th1",
+  "Cytomono", "M1_mac", "APC_M1", "APC_M2Mac", "Act_M2Mac", 
+  "Tissue_Repair_M2Mac", "Lipid_macs", "organised_immune"
+)
+
+# Define cell type colors
+celltype_colors <- c(
+  # PLASMA/B CELLS
+  "IgM_Plasma" = "#00CED1", "IgA_Plasma" = "#00FFFF",
+  "Plasmablasts" = "#4682B4", "memB" = "#2F4F4F",
+  "EarlyPlasma_APC" = "#1E90FF",
+  
+  # T CELLS
+  "Teff" = "#9400D3", "Th1_DC" = "#EE82EE",
+  "Tcm_DC" = "#FF1493", "Th1" = "#C71585", "Tcyto" = "#7B68EE",
+  
+  # MACROPHAGES
+  "Cytomono" = "#00008B", "M1_mac" = "darkred", "APC_M1" = "#FFD700",
+  "APC_M2Mac" = "#D2691E", "Act_M2Mac" = "#CD853F",
+  "Tissue_Repair_M2Mac" = "#DEB887", "Lipid_macs" = "#FF6347",
+  
+  # NEUTROPHILS
+  "Neuts" = "#00FF7F",
+  
+  # IMMUNE COMPLEX
+  "organised_immune" = "#ADFF2F",
+  
+  # KERATINOCYTES
+  "BasalKer" = "#FDBF6F", "inf_BasalKer" = "#F0FFF0",
+  "SuprabasalKer" = "#CAB2D6", "inf_SupraBasal" = "#808000",
+  "TopKer" = "#A6CEE3", "inf_TopKer" = "#87CEEB",
+  "LC_Basal" = "#FB9A99",
+  
+  # STROMAL
+  "Sebaceous" = "#FFC0CB", "Eccrine" = "#B2DF8A",
+  "muscle" = "#E6E6FA", "Schwann" = "#FFA07A", "Endo" = "#FFF0F5",
+  
+  # FIBROBLASTS
+  "Fib1" = "#FFE4B5", "Fib2" = "#FFFACD", "fib3" = "#D3D3D3",
+  
+  # MIXED/OTHER
+  "RBC_mac_Tc" = "#808080"
+)
+
+# Create P1_L vs Others grouping
+integrated_Eth_cohort_filteredL$P1L_group <- ifelse(
+  integrated_Eth_cohort_filteredL$sample_id == "P1_L",
+  "P1_L",
+  "Others"
+)
+
+cat("\n=== Patient Grouping ===\n")
+print(table(integrated_Eth_cohort_filteredL$P1L_group))
+```
+
+# ============================================
+# FIGURE 4A: Heatmap P1_L vs Others
+# ============================================
+```{r figure_4A}
+cat("\n=== FIGURE 4A: Differential Expression Heatmap (P1_L vs Others) ===\n")
+
+# Set identity for DE
+Idents(integrated_Eth_cohort_filteredL) <- "P1L_group"
+
+# Differential expression
+de_results <- FindMarkers(
+  integrated_Eth_cohort_filteredL,
+  ident.1 = "P1_L",
+  ident.2 = "Others",
+  test.use = "wilcox",
+  logfc.threshold = 0.25,
+  min.pct = 0.1
+)
+
+# Add gene names
+de_results$gene <- rownames(de_results)
+
+# Get top 100 DEGs
+top_genes <- de_results %>%
+  filter(p_val_adj < 0.05) %>%
+  slice_max(order_by = abs(avg_log2FC), n = 100) %>%
+  pull(gene)
+
+# Save results
+write.csv(de_results, paste0(save_pathP1, "De_results_p1vs_others_top100.csv"))
+
+# Extract expression matrix
+integrated_Eth_cohort_filteredL <- ScaleData(integrated_Eth_cohort_filteredL, features = top_genes)
+mat <- GetAssayData(integrated_Eth_cohort_filteredL, slot = "scale.data")[top_genes, ]
+
+# Prepare annotations
+col_anno <- HeatmapAnnotation(
+  Patient = integrated_Eth_cohort_filteredL$sample_id,
+  Comparison = integrated_Eth_cohort_filteredL$P1L_group,
+  col = list(
+    Patient = setNames(scales::hue_pal()(5), unique(integrated_Eth_cohort_filteredL$sample_id)),
+    Comparison = c("P1_L" = "#E64B35", "Others" = "#4DBBD5")
+  )
+)
+
+# Create heatmap
+ht <- Heatmap(
+  mat,
+  name = "Scaled\nExpression",
+  top_annotation = col_anno,
+  show_column_names = FALSE,
+  show_row_names = TRUE,
+  row_names_gp = gpar(fontsize = 8),
+  cluster_columns = TRUE,
+  cluster_rows = TRUE,
+  col = colorRamp2(c(0, 2), c("white", "red")),
+  column_split = integrated_Eth_cohort_filteredL$P1L_group,
+  row_split = 10,
+  border = TRUE
+)
+
+pdf(paste0(save_pathP1, "4_A_heatmap.pdf"), width = 10, height = 12)
+draw(ht)
+dev.off()
+
+cat("Figure 4A complete: Heatmap saved\n")
+```
+
+# ============================================
+# FIGURE 4B: Cytotoxicity Score Feature Plots
+# ============================================
+```{r figure_4B}
+cat("\n=== FIGURE 4B: Cytotoxicity Score and Gene Expression ===\n")
+
+# Define cytotoxicity genes
+cytotox_genes <- c("GZMB", "PRF1", "GNLY", "NKG7")
+
+# Calculate cytotoxicity score
+integrated_Eth_cohort_filteredL <- AddModuleScore(
+  integrated_Eth_cohort_filteredL,
+  features = list(cytotox_genes),
+  name = "Cytotoxicity_score"
+)
+
+# Plot cytotoxicity score
+P3 <- FeaturePlot(integrated_Eth_cohort_filteredL, 
+            features = "Cytotoxicity_score1",
+            reduction = "umap", min.cutoff = 0, pt.size = 2, order = TRUE) 
+
+# Plot individual genes
+P4 <- FeaturePlot(integrated_Eth_cohort_filteredL, 
+            features = cytotox_genes,
+            reduction = "umap", min.cutoff = 0, order = TRUE, keep.scale = "all") 
+
+# Combine plots
+Joint_feature <- P3 | P4
+ggsave(paste0(save_pathP1, "4_B_Featureplot_cytotoxicityscore_genesinvolved.pdf"), 
+       Joint_feature, width = 18, height = 8)
+
+cat("Figure 4B complete: Feature plots saved\n")
+```
+
+# ============================================
+# FIGURE 4C: Boxplot Cytotoxicity Score Across Patients
+# ============================================
+```{r figure_4C}
+cat("\n=== FIGURE 4C: Cytotoxicity Score Comparison Across Patients ===\n")
+
+p <- SCpubr::do_BoxPlot(
+  sample = integrated_Eth_cohort_filteredL,
+  feature = "Cytotoxicity_score1",group.by = "sample_id",
+  use_test = TRUE, colors.use = c("P1_L" = "#E64B35", "P2_L" = "#4DBBD5", 
+           "P3_L" = "#00A087", "P4_L" = "#3C5488", "P6_L" = "#F39B7F"),
+  comparisons = list(c("P1_L", "P2_L"),
+                     c("P1_L", "P3_L"),
+                     c("P1_L", "P4_L")),
+  map_signif_level = FALSE
+)
+
+ggsave(paste0(save_pathP1, "4_C_P1_boxplot_cytotoxicity_score_allpts.pdf"), 
+       p, width = 12, height = 8)
+
+cat("Figure 4C complete: Boxplot saved\n")
+```
+
+# ============================================
+# FIGURE 4D: Spatial Plot Cytotoxicity Score
+# ============================================
+```{r figure_4D}
+cat("\n=== FIGURE 4D: Spatial Distribution of Cytotoxicity Score ===\n")
+
+p1 <- SpatialFeaturePlot(integrated_Eth_cohort_filteredL, 
+                         features = "Cytotoxicity_score1", 
+                         images = "Eth_392_1_4", 
+                         min.cutoff = "q3", 
+                         pt.size.factor = 4.5, 
+                         alpha = 0.8)
+
+ggsave(paste0(save_pathP1, "4_D_P1_spatialplot_cytotoxicity_score1.pdf"), 
+       p1, width = 18, height = 5)
+
+cat("Figure 4D complete: Spatial plot saved\n")
+```
+
+# ============================================
+# FIGURE 4E: Scatter Pie Plot Cell Type Composition
+# ============================================
+```{r figure_4E}
+cat("\n=== FIGURE 4E: Cell Type Composition Scatter Pie Plot ===\n")
+
+# Subset P1_L only
+P1L_subset <- subset(integrated_Eth_cohort_filteredL, subset = patient == "P1")
+
+# Get spatial coordinates
+pos <- GetTissueCoordinates(P1L_subset)
+pos <- pos %>%
+  select(-cell) %>%
+  select(y, x)
+
+# Define topic columns
+topic_columns <- colnames(P1L_subset@meta.data)[69:103]
+
+# Extract theta matrix (proportions)
+P1_theta <- as.matrix(P1L_subset@meta.data[, topic_columns])
+rownames(P1_theta) <- colnames(P1L_subset)
+
+# Define topic order for legend
+topic_order <- topic_columns
+
+# Create the scatter pie plot
+p <- create_custom_spatial_plot(
+  theta = P1_theta,
+  pos = pos,
+  colors = celltype_colors,
+  title = "Cell Type Composition - P1_L",
+  topic_order = topic_order,
+  r = 110
+)
+
+ggsave(paste0(save_pathP1, "4_E_P1_L_scatterpie.pdf"), p, width = 12, height = 10)
+
+cat("Figure 4E complete: Scatter pie plot saved\n")
+```
+
+# ============================================
+# FIGURE 4F: Cell Type Enrichment in High Cytotoxic Regions
+# ============================================
+```{r figure_4F}
+cat("\n=== FIGURE 4F: Cell Type Enrichment Analysis ===\n")
+
+# Define cytotoxic regions based on Q3 threshold
+boxplot_grades <- boxplot(integrated_Eth_cohort_filteredL$Cytotoxicity_score1,
+                          main = "Box Plot for Avg. cytotoxic score",
+                          xlab = "score",
+                          col = "royalblue",
+                          border = "black",
+                          horizontal = TRUE)
+
+boxplot_5_stats <- boxplot_grades$stats
+rownames(boxplot_5_stats) <- c("LCL", "Q1", "Median", "Q3", "UCL")
+Q3_threshold <- boxplot_5_stats["Q3", 1]
+
+# Create categorical variable
+integrated_Eth_cohort_filteredL$Cytotox_category <- ifelse(
+  integrated_Eth_cohort_filteredL$Cytotoxicity_score1 >= Q3_threshold,
+  "High_Cytotoxic",
+  "Low_Cytotoxic"
+)
+
+# Update P1L_subset with cytotox category
+P1L_subset <- subset(integrated_Eth_cohort_filteredL, subset = patient == "P1")
+
+# Get available cell types
+Idents(integrated_Eth_cohort_filteredL) <- "dominant_celltype"
+cell_types <- levels(Idents(integrated_Eth_cohort_filteredL))
+
+# Statistical comparison of cell types
+available_cell_types <- cell_types[cell_types %in% colnames(P1L_subset@meta.data)]
+celltype_stats <- list()
+
+for (ct in available_cell_types) {
+  cytotoxic_data <- P1L_subset@meta.data %>%
+    select(Cytotox_category, !!sym(ct))
+  
+  if (sum(cytotoxic_data$Cytotox_category == "High_Cytotoxic") > 5 && 
+      sum(cytotoxic_data$Cytotox_category == "Low_Cytotoxic") > 5) {
+    
+    test_result <- wilcox.test(
+      cytotoxic_data[[ct]][cytotoxic_data$Cytotox_category == "High_Cytotoxic"],
+      cytotoxic_data[[ct]][cytotoxic_data$Cytotox_category == "Low_Cytotoxic"]
+    )
+    
+    mean_high <- mean(cytotoxic_data[[ct]][cytotoxic_data$Cytotox_category == "High_Cytotoxic"], na.rm = TRUE)
+    mean_low <- mean(cytotoxic_data[[ct]][cytotoxic_data$Cytotox_category == "Low_Cytotoxic"], na.rm = TRUE)
+    
+    celltype_stats[[ct]] <- data.frame(
+      CellType = ct,
+      Mean_High_Cytotoxic = mean_high,
+      Mean_Low_Cytotoxic = mean_low,
+      FoldChange = mean_high / (mean_low + 0.001),
+      pvalue = test_result$p.value
+    )
+  }
+}
+
+# Combine results
+celltype_comparison <- do.call(rbind, celltype_stats)
+celltype_comparison$padj <- p.adjust(celltype_comparison$pvalue, method = "BH")
+celltype_comparison <- celltype_comparison %>%
+  filter(FoldChange > 0.1) %>%
+  arrange(desc(FoldChange))
+
+# Save results
+write.csv(celltype_comparison,
+          paste0(save_pathP1, "Table_S_4_celltype_enrichment_high_cytotoxic_stats.csv"),
+          row.names = FALSE)
+
+# Enrichment plot
+p_enrichment <- ggplot(celltype_comparison, 
+                       aes(x = reorder(CellType, FoldChange), 
+                           y = FoldChange,
+                           fill = padj < 0.05)) +
+  geom_bar(stat = "identity", color = "black") +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
+  scale_fill_manual(values = c("TRUE" = "#E64B35", "FALSE" = "gray70"),
+                    name = "Significant\n(padj < 0.05)") +
+  coord_flip() +
+  labs(title = "Cell Type Enrichment in High Cytotoxic Regions (P1_L)",
+       subtitle = "Fold Change: High Cytotoxic / Low Cytotoxic",
+       x = "Cell Type",
+       y = "Fold Change") +
+  theme_classic() +
+  theme(legend.position = "right")
+
+ggsave(paste0(save_pathP1, "4_F_CellType_enrichment_high_cytotoxic.pdf"),
+       p_enrichment, width = 6, height = 8)
+
+cat("Figure 4F complete: Cell type enrichment plot saved\n")
+```
+
+# ============================================
+# FIGURE 4G: Correlation Cytotoxicity Score vs Total Cytotoxic Cells
+# ============================================
+```{r figure_4G}
+cat("\n=== FIGURE 4G: Correlation Analysis ===\n")
+
+# Create Total_Cytotoxic composite score
+integrated_Eth_cohort_filteredL$Total_Cytotoxic <- 
+  integrated_Eth_cohort_filteredL$Tcyto + 
+  integrated_Eth_cohort_filteredL$Cytomono + 
+  integrated_Eth_cohort_filteredL$M1_mac + 
+  integrated_Eth_cohort_filteredL$Neuts
+
+# Basic scatter plot
+p1 <- FeatureScatter(
+  integrated_Eth_cohort_filteredL,
+  feature1 = "Total_Cytotoxic",
+  feature2 = "Cytotoxicity_score1",
+  group.by = "sample_id",
+  pt.size = 1.5,
+  cols = c("P1_L" = "#E64B35", "P2_L" = "#4DBBD5", 
+           "P3_L" = "#00A087", "P4_L" = "#3C5488", "P6_L" = "#F39B7F")
+) +
+  ggtitle("Cytotoxicity Score vs Total Cytotoxic Cells") +
+  theme_classic()
+
+# Get P1_L data for trendline
+p1_data <- integrated_Eth_cohort_filteredL@meta.data %>%
+  filter(sample_id == "P1_L") %>%
+  dplyr::select(sample_id, Total_Cytotoxic, Cytotoxicity_score1)
+
+# Calculate Spearman correlation for P1_L
+cor_p1 <- cor.test(p1_data$Total_Cytotoxic, 
+                   p1_data$Cytotoxicity_score1, 
+                   method = "spearman")
+
+# Add trendline for P1_L only
+p1_with_p1_trend <- p1 + 
+  geom_smooth(data = p1_data,
+              aes(x = Total_Cytotoxic, y = Cytotoxicity_score1),
+              method = "lm", 
+              se = TRUE,
+              color = "#E64B35",
+              fill = "#E64B35",
+              alpha = 0.2,
+              linewidth = 1.5,
+              linetype = "dashed") +
+  annotate("text", 
+           x = max(integrated_Eth_cohort_filteredL$Total_Cytotoxic) * 0.65,
+           y = max(integrated_Eth_cohort_filteredL$Cytotoxicity_score1) * 0.95,
+           label = paste0("P1_L (n=", nrow(p1_data), "):\n",
+                         "Spearman ρ = ", round(cor_p1$estimate, 3), "\n",
+                         "p = ", format.pval(cor_p1$p.value, digits = 2)),
+           size = 4.5,
+           color = "#E64B35",
+           fontface = "bold",
+           hjust = 0,
+           vjust = 1) +
+  ggtitle("Cytotoxicity Score vs Total Cytotoxic Cells\n(Trendline for P1_L only)") +
+  theme_classic()
+
+ggsave(paste0(save_pathP1, "4_G_FeatureScatter_P1_trendline_only.pdf"), 
+       p1_with_p1_trend, width = 10, height = 7)
+
+cat("Figure 4G complete: Correlation plot saved\n")
+cat("P1_L Spearman correlation: ρ =", round(cor_p1$estimate, 3), 
+    ", p =", format.pval(cor_p1$p.value), "\n")
+```
+
+# ============================================
+# FIGURE 4H: Boxplot Organised Immune Score
+# ============================================
+```{r figure_4H}
+cat("\n=== FIGURE 4H: Organised Immune Score Comparison ===\n")
+
+p <- SCpubr::do_BoxPlot(
+  sample = integrated_Eth_cohort_filteredL,
+  feature = "organised_immune",
+  group.by = "P1L_group",
+  use_test = TRUE, 
+  comparisons = list(c("P1_L", "Others")),
+  map_signif_level = FALSE
+)
+
+ggsave(paste0(save_pathP1, "4_H_P1_boxplot_orgimmune_score_P1l_vs_others.pdf"), 
+       p, width = 5, height = 6)
+
+cat("Figure 4H complete: Boxplot saved\n")
+```
+
+# ============================================
+# FIGURE 4I: Spatial Plot Organised Immune
+# ============================================
+```{r figure_4I}
+cat("\n=== FIGURE 4I: Spatial Distribution of Organised Immune ===\n")
+
+# Extract organised_immune proportions
+theta <- as.matrix(P1L_subset@meta.data$organised_immune)
+rownames(theta) <- colnames(P1L_subset)
+colnames(theta) <- "organised_immune"
+
+# Get spatial coordinates (reuse pos from Figure 4E)
+pos <- GetTissueCoordinates(P1L_subset)
+pos <- pos %>%
+  select(-cell) %>%
+  select(y, x)
+
+# Plot with vizTopic
+p5 <- vizTopic(
+  theta = theta,
+  pos = pos,
+  topic = "organised_immune",
+  plotTitle = "Organised Immune Topic - P1_L",
+  size = 2.5,
+  stroke = 0.1,
+  alpha = 1
+) +
+  ggplot2::guides(colour = "none") +
+  ggplot2::scale_fill_viridis_c(
+    option = "turbo",
+    name = "Proportion",
+    direction = 1
+  )
+
+ggsave(paste0(save_pathP1, "4_I_P1_vizplot_orgimmune.pdf"), p5, height = 4, width = 4)
+
+cat("Figure 4I complete: Spatial plot saved\n")
+```
+
+# ============================================
+# FIGURE 4J: Spatial Feature Plots Selected Genes
+# ============================================
+```{r figure_4J}
+cat("\n=== FIGURE 4J: Spatial Distribution of Organised Immune Genes ===\n")
+
+P6 <- SpatialFeaturePlot(
+  integrated_Eth_cohort_filteredL, 
+  features = c("CXCL13", "C2", "EMILIN1", "POU2AF1", "CD79A", "CCND2", 
+               "CCL19", "CCL21", "SELL", "CCR7", "CXCL12", "PDPN"), 
+  ncol = 4, 
+  images = "Eth_392_1_4", 
+  keep.scale = "all", 
+  pt.size.factor = 5
+)
+
+ggsave(paste0(save_pathP1, "4_J_P1_Spatialfeatureplots_selectedgenes_orgimmune.pdf"),
+       P6, height = 12, width = 12)
+
+cat("Figure 4J complete: Spatial feature plots saved\n")
+```
+
+# ============================================
+# SUPPLEMENTARY FIGURE S3A: Heatmap P1_L vs P1_H
+# ============================================
+```{r figure_S3A}
+cat("\n=== SUPPLEMENTARY FIGURE S3A: P1 Lesion vs Healthy Comparison ===\n")
+
+# Subset P1 samples (both lesion and healthy)
+P1_subset <- subset(integrated_Eth_cohort_filtered, subset = patient == "P1")
+cat("P1 subset samples:\n")
+print(table(P1_subset$sample_id))
+
+Idents(P1_subset) <- "sample_id"
+P1_subset <- PrepSCTFindMarkers(P1_subset)
+
+# Differential expression
+P1_de_results <- FindMarkers(
+  P1_subset,
+  ident.1 = "P1_L",
+  ident.2 = "P1_H",
+  test.use = "wilcox",
+  logfc.threshold = 0.25,
+  min.pct = 0.1
+)
+
+P1_de_results$gene <- rownames(P1_de_results)
+
+# Get top 50 DEGs
+top_genes <- P1_de_results %>%
+  filter(p_val_adj < 0.05) %>%
+  slice_max(order_by = abs(avg_log2FC), n = 50) %>%
+  pull(gene)
+
+write.csv(P1_de_results, paste0(save_pathP1, "DE_results_p1L_vs_p1H.csv"))
+
+# Extract expression matrix
+P1_subset <- ScaleData(P1_subset, features = top_genes)
+mat <- GetAssayData(P1_subset, slot = "scale.data")[top_genes, ]
+
+# Prepare annotations
+col_anno <- HeatmapAnnotation(
+  Patient = P1_subset$sample_id,
+  Comparison = P1_subset$sample_id,
+  col = list(
+    Patient = setNames(scales::hue_pal()(2), unique(P1_subset$sample_id)),
+    Comparison = c("P1_L" = "#E64B35", "P1_H" = "#4DBBD5")
+  )
+)
+
+# Create heatmap
+ht <- Heatmap(
+  mat,
+  name = "Scaled\nExpression",
+  top_annotation = col_anno,
+  show_column_names = FALSE,
+  show_row_names = TRUE,
+  row_names_gp = gpar(fontsize = 8),
+  cluster_columns = TRUE,
+  cluster_rows = TRUE,
+  col = colorRamp2(c(0, 2), c("white", "red")),
+  column_split = P1_subset$sample_id,
+  row_split = 5,
+  border = TRUE
+)
+
+pdf(paste0(save_pathP1, "S3_A_heatmap.pdf"), width = 10, height = 12)
+draw(ht)
+dev.off()
+
+cat("Supplementary Figure S3A complete: Heatmap saved\n")
+```
+
+# ============================================
+# SUPPLEMENTARY FIGURE S3B: Ridge Plot Cytotoxicity Genes
+# ============================================
+```{r figure_S3B}
+cat("\n=== SUPPLEMENTARY FIGURE S3B: Ridge Plot of Cytotoxicity Genes ===\n")
+
+p2 <- RidgePlot(object = integrated_Eth_cohort_filteredL, 
+                features = cytotox_genes, group.by = "P1L_group",
+                ncol = 2)
+
+ggsave(paste0(save_pathP1, "S3_B_P1_vs_others_ridgeplot_cytotox_genes.pdf"), 
+       p2, width = 12, height = 8)
+
+cat("Supplementary Figure S3B complete: Ridge plot saved\n")
+```
+
+# ============================================
+# SUPPLEMENTARY FIGURE S3C: Volcano Plot High vs Low Cytotoxic
+# ============================================
+```{r figure_S3C}
+cat("\n=== SUPPLEMENTARY FIGURE S3C: Differential Expression Volcano Plot ===\n")
+
+# Perform differential expression in P1 (High vs Low cytotoxic)
+Idents(P1L_subset) <- "Cytotox_category"
+
+cytotox_DE <- FindMarkers(
+  P1L_subset,
+  ident.1 = "High_Cytotoxic",
+  ident.2 = "Low_Cytotoxic",
+  min.pct = 0.25,
+  min.pct.diff = 0.25,
+  logfc.threshold = 0.25,
+  test.use = "wilcox"
+)
+
+cytotox_DE$gene <- rownames(cytotox_DE)
+cytotox_DE_sig <- cytotox_DE %>%
+  filter(p_val_adj < 0.05)
+
+write.csv(cytotox_DE_sig, paste0(save_pathP1, "DE_High_vs_Low_Cytotoxic_regions.csv"))
+
+# Add significance column
+cytotox_DE$significant <- ifelse(
+  cytotox_DE$p_val_adj < 0.05 & abs(cytotox_DE$avg_log2FC) > 1.0,
+  "Significant",
+  "Not Significant"
+)
+
+# Get top genes for labeling
+top_DE <- cytotox_DE %>%
+  filter(p_val_adj < 0.05) %>%
+  arrange(desc(abs(avg_log2FC))) %>%
+  head(30)
+
+# Create volcano plot
+volcano <- ggplot(cytotox_DE, aes(x = avg_log2FC, y = -log10(p_val_adj), color = significant)) +
+  geom_point(alpha = 0.6, size = 1.5) +
+  scale_color_manual(values = c("Significant" = "red", "Not Significant" = "grey")) +
+  geom_vline(xintercept = c(-1, 1), linetype = "dashed", color = "black") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +
+  geom_text_repel(data = top_DE, aes(label = gene), size = 3, max.overlaps = 30, color = "black") +
+  labs(
+    title = "High vs Low Cytotoxic Regions",
+    x = "Log2 Fold Change",
+    y = "-Log10 Adjusted P-value"
+  ) + 
+  theme_minimal() +
+  theme(legend.position = "top")
+
+ggsave(paste0(save_pathP1, "S3_C_Volcano_plot_High_vs_Low_Cytotoxic.pdf"), 
+       volcano, width = 8, height = 6)
+
+cat("Supplementary Figure S3C complete: Volcano plot saved\n")
+```
+
+# ============================================
+# SUPPLEMENTARY FIGURE S3D: Cell Type Composition Stacked Bar
+# ============================================
+```{r figure_S3D}
+cat("\n=== SUPPLEMENTARY FIGURE S3D: Cell Type Composition ===\n")
+
+# Calculate mean proportions by cytotoxic region
+cytotoxic_cell_props <- P1L_subset@meta.data %>%
+  select(Cytotox_category, all_of(cell_types[cell_types %in% colnames(P1L_subset@meta.data)])) %>%
+  group_by(Cytotox_category) %>%
+  summarise(across(everything(), mean, na.rm = TRUE)) %>%
+  pivot_longer(cols = -Cytotox_category, names_to = "CellType", values_to = "Proportion")
+
+# Get top 15 cell types most enriched in High cytotoxic
+top_celltypes <- cytotoxic_cell_props %>%
+  filter(Cytotox_category == "High_Cytotoxic") %>%
+  arrange(desc(Proportion)) %>%
+  head(15) %>%
+  pull(CellType)
+
+# Filter for top cell types
+cytotoxic_cell_props_top <- cytotoxic_cell_props %>%
+  filter(CellType %in% top_celltypes)
+
+# Stacked bar chart
+p_celltype_stacked <- ggplot(cytotoxic_cell_props_top, 
+                              aes(x = Cytotox_category, y = Proportion, fill = CellType)) +
+  geom_bar(stat = "identity", color = "black", size = 0.3) +
+  scale_fill_manual(values = celltype_colors) +
+  labs(title = "Cell Type Composition: High vs Low Cytotoxic Regions (top 15)",
+       x = "Cytotoxic Region", y = "Mean Proportion") +
+  theme_classic() +
+  theme(legend.position = "right",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave(paste0(save_pathP1, "S3_D_CellType_composition_cytotoxic_regions_top15.pdf"), 
+       p_celltype_stacked, width = 5, height = 6)
+
+cat("Supplementary Figure S3D complete: Cell type composition plot saved\n")
+```
+

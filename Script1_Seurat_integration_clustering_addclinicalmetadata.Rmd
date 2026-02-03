@@ -1,0 +1,456 @@
+
+
+```{r}
+# ==============================================================================
+# 10x Visium Spatial Analysis - Sample Integration Script
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Load Required Libraries
+# ------------------------------------------------------------------------------
+
+# Core analysis packages
+library(Seurat)           # Single-cell and spatial RNA-seq analysis
+library(dplyr)            # Data manipulation
+library(data.table)       # Fast data manipulation
+
+# Database and data handling
+library(sqldf)            # SQL queries on R data frames
+
+# Visualization packages
+library(ggplot2)          # Core plotting
+library(patchwork)        # Combining multiple plots
+library(ggpubr)           # Publication-ready plots
+library(plotly)           # Interactive plots
+library(cowplot)          # Publication-quality figures
+library(RColorBrewer)     # Color palettes
+library(gplots)           # Additional plotting tools
+library(corrplot)         # Correlation plots
+library(EnhancedVolcano)  # Volcano plots for DE analysis
+
+# Clustering and analysis
+library(clustree)         # Visualize clustering at different resolutions
+
+# Spatial analysis
+library(spatstat)         # Spatial statistics
+
+# Utility packages
+library(stringr)          # String manipulation
+library(reshape2)         # Data reshaping
+library(VennDiagram)      # Venn diagrams
+library(grid)             # Grid graphics (for PDF output)
+
+# ------------------------------------------------------------------------------
+# Define Study Parameters
+# ------------------------------------------------------------------------------
+
+# Study identifier
+study_name <- "ethiopian4mm_cohort"
+
+# Main study directory path
+study_path <- "F:/SD23.9.2_Dioraphte_Ethiopian_4mm_ND23.09/"
+
+# Sample identifiers for analysis
+samples <- c("392_1_2", "392_1_4", 
+             "393_3_2", "393_3_4", 
+             "391_4_2", "391_4_4", 
+             "392_5_2", "392_5_4", 
+             "391_7_2", "391_7_4")
+
+# Sample grouping: tissue type (paired healthy/lesion samples)
+sample_group <- rep(c("healthy", "lesion"), 5)
+
+
+# Output directory (excluding P5 samples)
+save_path <- paste0(study_path, "R/No_P5/test/")
+
+# Toggle for saving outputs (1 = save, 0 = don't save)
+save_on <- 1
+```
+
+
+```{r}
+# ==============================================================================
+# Load and Integrate 10x Visium Spatial Data
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Load Spatial Data for Each Sample
+# ------------------------------------------------------------------------------
+
+# Initialize list to store Seurat objects and counter for metadata
+seuratSpatial <- list()
+counter <- 1
+
+# Loop through each sample to load spatial data
+for (sample in samples) {
+  
+  # Locate sample directory and H5 file
+  sample_dir <- Sys.glob(paste0(study_path, "V*/*", sample, "*/outs/"))
+  sample_path <- Sys.glob(paste0(study_path, "V*/*", sample, "*/outs/", "*.h5"))
+  sample_path_file <- tail(strsplit(sample_path, split = "/")[[1]], n = 1)
+  print(sample_path_file)
+  
+  # Create unique key for this sample
+  key <- paste0("Eth_", sample)
+  
+  # Load 10x Visium spatial data
+  seuratSpatial[[key]] <- Load10X_Spatial(
+    sample_dir,
+    filename = sample_path_file,
+    assay = "Spatial",
+    slice = key,
+    filter.matrix = TRUE,  # Remove spots with no counts
+    to.upper = FALSE       # Keep gene names as-is
+  )
+  
+  # Add sample metadata
+  seuratSpatial[[key]]$orig.ident <- paste0("Eth_", sample)  # Sample ID
+  seuratSpatial[[key]]$group <- sample_group[[counter]]      # Healthy/Lesion label
+  
+  counter <- counter + 1
+}
+
+
+
+# ------------------------------------------------------------------------------
+# Normalize Data with SCTransform
+# ------------------------------------------------------------------------------
+
+# Apply SCTransform normalization to each sample
+# Regresses out technical variation from sequencing depth
+for (sample in samples) {
+  key <- paste0("Eth_", sample)
+  
+  seuratSpatial[[key]] <- SCTransform(
+    seuratSpatial[[key]], 
+    assay = "Spatial", 
+    verbose = FALSE,
+    vars.to.regress = c("nCount_Spatial", "nFeature_Spatial")  # Regress technical effects
+  )
+}
+
+# ------------------------------------------------------------------------------
+# Prepare for Integration
+# ------------------------------------------------------------------------------
+
+# Select features (genes) to use for integration
+# These are highly variable genes shared across samples
+features <- SelectIntegrationFeatures(
+  object.list = seuratSpatial, 
+  nfeatures = 3000
+)
+
+# Create "RNA" assay from "Spatial" assay
+# This is required for Seurat integration workflow
+for (i in names(seuratSpatial)) {
+  seuratSpatial[[i]][["RNA"]] <- seuratSpatial[[i]][["Spatial"]]
+}
+
+# Verify RNA assay was created successfully
+print(seuratSpatial[[1]])
+
+# Prepare SCT-normalized data for integration
+seuratSpatial <- PrepSCTIntegration(
+  object.list = seuratSpatial, 
+  anchor.features = features
+)
+
+# ------------------------------------------------------------------------------
+# Integrate Samples
+# ------------------------------------------------------------------------------
+
+# Find integration anchors across samples
+# Anchors are pairs of cells from different samples with similar expression
+immune.anchors <- FindIntegrationAnchors(
+  object.list = seuratSpatial, 
+  normalization.method = "SCT", 
+  anchor.features = features
+)
+
+# Integrate data using identified anchors
+# Creates a batch-corrected "integrated" assay
+integrated_Eth_cohort <- IntegrateData(
+  anchorset = immune.anchors, 
+  normalization.method = "SCT"
+)
+
+# ------------------------------------------------------------------------------
+# Scale Integrated Data
+# ------------------------------------------------------------------------------
+
+# Scale all features in the SCT assay
+# This centers and scales gene expression for downstream analysis
+integrated_Eth_cohort <- ScaleData(
+  integrated_Eth_cohort, 
+  features = rownames(integrated_Eth_cohort), 
+  assay = "SCT"
+)
+
+```
+
+
+
+
+```{r pressure, echo=FALSE}
+# ==============================================================================
+# Clustering and Dimensionality Reduction
+# ==============================================================================
+
+
+# Set parameters
+dims <- 15
+
+# ------------------------------------------------------------------------------
+# Dimensionality Reduction (PCA, UMAP, tSNE)
+# ------------------------------------------------------------------------------
+
+# Run PCA
+integrated_Eth_cohort <- RunPCA(integrated_Eth_cohort, assay = "integrated", verbose = FALSE)
+
+# Visualize PC variance
+ElbowPlot(integrated_Eth_cohort)
+
+# Find neighbors (required for clustering)
+integrated_Eth_cohort <- FindNeighbors(integrated_Eth_cohort, reduction = "pca", dims = 1:dims)
+
+# Run UMAP and tSNE for visualization
+integrated_Eth_cohort <- RunUMAP(integrated_Eth_cohort, reduction = "pca", dims = 1:dims)
+integrated_Eth_cohort <- RunTSNE(integrated_Eth_cohort, reduction = "pca", dims = 1:dims)
+
+# ------------------------------------------------------------------------------
+# Test Multiple Clustering Resolutions (for clustree)
+# ------------------------------------------------------------------------------
+
+# Define range of resolutions to test
+resolutions <- c(0, 0.05, 0.1, 0.2, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 5)
+
+# Cluster at each resolution
+for (res in resolutions) {
+  integrated_Eth_cohort <- FindClusters(integrated_Eth_cohort, resolution = res)
+}
+
+# ------------------------------------------------------------------------------
+# Visualize Clustering Stability with Clustree
+# ------------------------------------------------------------------------------
+
+# Set default assay for feature plotting
+DefaultAssay(integrated_Eth_cohort) <- "SCT"
+
+# Basic clustree showing cluster relationships across resolutions
+clustree(integrated_Eth_cohort, prefix = "integrated_snn_res.")
+
+# Clustree colored by key immune markers to guide resolution selection
+# These help identify biologically meaningful resolution
+
+# PTPRC (CD45) - pan-leukocyte marker
+clustree(
+  integrated_Eth_cohort, 
+  prefix = "integrated_snn_res.",
+  node_colour = "PTPRC", 
+  node_colour_aggr = "median"
+)
+
+# CD3D - T cell marker
+clustree(
+  integrated_Eth_cohort, 
+  prefix = "integrated_snn_res.",
+  node_colour = "CD3D", 
+  node_colour_aggr = "median"
+)
+
+# CD8A - Cytotoxic T cell marker
+clustree(
+  integrated_Eth_cohort, 
+  prefix = "integrated_snn_res.",
+  node_colour = "CD8A", 
+  node_colour_aggr = "median"
+)
+
+# CD68 - Myeloid cell marker
+clustree(
+  integrated_Eth_cohort, 
+  prefix = "integrated_snn_res.",
+  node_colour = "CD68", 
+  node_colour_aggr = "median"
+)
+
+# ------------------------------------------------------------------------------
+# Choose Optimal Resolution
+# ------------------------------------------------------------------------------
+# Based on clustree analysis, choose resolution that:
+# - Separates biologically distinct populations
+# - Doesn't over-cluster (too many unstable micro-clusters)
+# - Shows clear marker expression patterns
+
+res <- 0.6  # CHOSEN BASED ON CLUSTREE RESULTS
+
+# Set active identity to chosen resolution
+Idents(integrated_Eth_cohort) <- integrated_Eth_cohort@meta.data[[paste0("integrated_snn_res.", res)]]
+
+
+# Set factor levels for tissue type (for consistent plotting order)
+integrated_Eth_cohort$group <- factor(
+  integrated_Eth_cohort$group, 
+  levels = c("healthy", "lesion")
+)
+
+
+
+# ==============================================================================
+# Differential Expression Analysis Between Clusters
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Set Resolution and Prepare for DE Analysis
+# ------------------------------------------------------------------------------
+
+res <- 0.6
+dims <- 15
+
+# Set active identity to chosen clustering resolution
+Idents(integrated_Eth_cohort) <- integrated_Eth_cohort@meta.data[["integrated_snn_res.0.6"]]
+
+# Check cluster composition across samples
+prop.table(table(integrated_Eth_cohort$orig.ident, integrated_Eth_cohort@active.ident), margin = 2)
+
+# ------------------------------------------------------------------------------
+# Prepare Data for Marker Gene Finding
+# ------------------------------------------------------------------------------
+
+# Prepare SCT assay for differential expression
+integrated_Eth_cohort <- PrepSCTFindMarkers(
+  object = integrated_Eth_cohort, 
+  assay = "SCT"
+)
+
+# Re-scale all features
+integrated_Eth_cohort <- ScaleData(
+  integrated_Eth_cohort, 
+  features = rownames(integrated_Eth_cohort), 
+  assay = "SCT"
+)
+
+# ------------------------------------------------------------------------------
+# Find Marker Genes for All Clusters
+# ------------------------------------------------------------------------------
+
+# Find differentially expressed genes for each cluster vs all others
+all_markers <- FindAllMarkers(
+  object = integrated_Eth_cohort, 
+  assay = "SCT", 
+  only.pos = TRUE,           # Only positive markers (upregulated in cluster)
+  min.pct = 0.25,            # Gene must be detected in ≥25% of cells
+  logfc.threshold = 0.3      # Minimum log2 fold-change threshold
+)
+
+
+# ------------------------------------------------------------------------------
+# Save Results
+# ------------------------------------------------------------------------------
+
+# Save marker genes to CSV
+write.csv(
+  all_markers, 
+  paste0(save_path, "DE_markers_res", res, "_dim_", dims, ".csv")
+)
+
+
+
+# ==============================================================================
+# Rename Clusters Based on Marker Expression
+# ==============================================================================
+
+
+# ------------------------------------------------------------------------------
+# Assign Biological Identities to Clusters
+# ------------------------------------------------------------------------------
+
+# Define new cluster names based on marker gene expression
+# Fib = Fibroblasts, Ker = Keratinocytes, T = T cells, 
+# B = B cells, Mye = Myeloid, Endo = Endothelial, Ig = Immunoglobulin
+new.cluster.ids <- c(
+  "Fib1",           # Cluster 0: Fibroblasts type 1
+  "T_mye1",         # Cluster 1: Mixed T cells and myeloid
+  "Ker1",           # Cluster 2: Keratinocytes type 1
+  "T_B",            # Cluster 3: T and B cells
+  "Ker2",           # Cluster 4: Keratinocytes type 2
+  "Ig_rich",        # Cluster 5: Immunoglobulin-rich (plasma cells)
+  "Mye1",           # Cluster 6: Myeloid cells type 1
+  "smooth_muscle",  # Cluster 7: Smooth muscle
+  "Endo",           # Cluster 8: Endothelial cells
+  "Ker3",           # Cluster 9: Keratinocytes type 3
+  "Ker4",           # Cluster 10: Keratinocytes type 4
+  "T_mye2"          # Cluster 11: Mixed T cells and myeloid type 2
+)
+
+# Apply new names to clusters
+names(new.cluster.ids) <- levels(integrated_Eth_cohort)
+integrated_Eth_cohort <- RenameIdents(integrated_Eth_cohort, new.cluster.ids)
+
+# Store renamed identities in metadata
+integrated_Eth_cohort$morpho <- Idents(integrated_Eth_cohort)
+
+# Verify new cluster names
+levels(Idents(integrated_Eth_cohort))
+```
+
+
+```{r pressure, echo=FALSE}
+# ==============================================================================
+# Add Clinical Metadata
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Create Sample ID Mapping
+# ------------------------------------------------------------------------------
+
+# Extract original identifiers
+old_names <- integrated_Eth_cohort$orig.ident
+new_names <- old_names  # Create copy to modify
+
+# Map sample codes to patient IDs with tissue type
+# Format: P# = Patient number, H = Non-lesion, L = Lesion
+new_names[new_names == "Eth_392_1_2"] <- "P1_H"
+new_names[new_names == "Eth_392_1_4"] <- "P1_L"
+new_names[new_names == "Eth_393_3_2"] <- "P2_H"
+new_names[new_names == "Eth_393_3_4"] <- "P2_L"
+new_names[new_names == "Eth_391_4_2"] <- "P3_H"
+new_names[new_names == "Eth_391_4_4"] <- "P3_L"
+new_names[new_names == "Eth_392_5_2"] <- "P4_H"
+new_names[new_names == "Eth_392_5_4"] <- "P4_L"
+
+new_names[new_names == "Eth_391_7_2"] <- "P6_H"
+new_names[new_names == "Eth_391_7_4"] <- "P6_L"
+
+# Add sample_id metadata column
+integrated_Eth_cohort <- AddMetaData(
+  object = integrated_Eth_cohort,
+  metadata = new_names,
+  col.name = "sample_id"
+)
+
+# ------------------------------------------------------------------------------
+# Add Patient ID Metadata
+# ------------------------------------------------------------------------------
+
+# Extract patient number from sample_id (first 2 characters: "P1", "P2", etc.)
+patient_ids <- substr(integrated_Eth_cohort$sample_id, 1, 2)
+
+integrated_Eth_cohort <- AddMetaData(
+  object = integrated_Eth_cohort,
+  metadata = patient_ids,
+  col.name = "patient"
+)
+
+# ------------------------------------------------------------------------------
+# Verify New Metadata
+# ------------------------------------------------------------------------------
+
+print("First few rows of updated metadata:")
+head(integrated_Eth_cohort@meta.data[, c("orig.ident", "sample_id", "group", "patient")])
+
+# Cross-tabulate original ID with patient ID
+table(integrated_Eth_cohort$orig.ident, integrated_Eth_cohort$patient)
+```
+

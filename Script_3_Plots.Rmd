@@ -1,0 +1,563 @@
+---
+title: "Script_3_plots"
+output: html_document
+date: "2026-02-02"
+---
+
+```{r setup, include=FALSE}
+# Load required libraries
+library(patchwork)
+library(Seurat)
+library(sqldf)
+library(dplyr)
+library(RColorBrewer)
+library(ggpubr)
+library(clustree)
+library(data.table)
+library(plotly)
+library(ggplot2)
+library(spatstat)
+library(gplots)
+library(corrplot)
+library(stringr)
+library(VennDiagram)
+library(grid)
+library(reshape2)
+library(cowplot)
+library(EnhancedVolcano)
+library(future)
+library(jsonlite)
+library(STdeconvolve)
+library(ggrepel)
+library(gridExtra)
+library(tidyr)
+library(scatterpie)
+  
+# Define study parameters
+study_name <- "ethiopian4mm_cohort"
+study_path <- "F:/SD23.9.2_Dioraphte_Ethiopian_4mm_ND23.09/"
+
+# Define samples (removed patient 5 lesion and non lesional)
+samples <- c("392_1_2", "392_1_4", "393_3_2", "393_3_4", 
+             "391_4_2", "391_4_4", "392_5_2", "392_5_4",
+             "391_7_2", "391_7_4")
+
+sample_group <- rep(c("healthy", "lesion"), 5)
+disease_group <- c("MCL", "healthy", "LCL", "healthy", "MCL", 
+                   "healthy", "LCL", "healthy", "DCL", "healthy")
+
+# Define paths
+read_path <- paste0(study_path, "R/No_P5/")
+save_pathL <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_sep/lesion/iteration_nov2025/test/")
+
+
+# Create directories if they don't exist (FIXED: removed quotes)
+if(!dir.exists(save_pathL)) {
+  dir.create(save_pathL, recursive = TRUE)
+}
+
+###input rds
+integrated_Eth_cohort_filteredL <-readRDS(paste0(save_pathL, "Lesion_integrated_Eth_cohort_filtered_35stdeconvTopics_reclus_relabelled_COMBINED_dominantTopic_added.rds"))
+
+###celltype colors for plotting
+# ============================================
+# Create dominant STdeconvolve cell type annotation
+# ============================================
+
+# Define cell type colors
+celltype_colors <- c(
+  # PLASMA/B CELLS
+  "IgM_Plasma" = "#00CED1",
+  "IgA_Plasma" = "#00FFFF",
+  "Plasmablasts" = "#4682B4",
+  "memB" = "#2F4F4F",
+ "EarlyPlasma_APC" = "#1E90FF",
+  
+  # T CELLS
+  "Teff" = "#9400D3",
+  "Th1_DC" = "#EE82EE",
+  "Tcm_DC" = "#FF1493",
+  "Th1" = "#C71585",
+  "Tcyto" = "#7B68EE",
+  
+  # MACROPHAGES
+  "Cytomono" = "#00008B",
+  "M1_mac" = "darkred",
+  "APC_M1" = "#FFD700",
+  "APC_M2Mac" = "#D2691E",
+  "Act_M2Mac" = "#CD853F",
+  "Tissue_Repair_M2Mac" = "#DEB887",
+  "Lipid_macs" = "#FF6347",
+  
+  # NEUTROPHILS
+  "Neuts" = "#00FF7F",
+  
+  # IMMUNE COMPLEX
+  "organised_immune" = "#ADFF2F",
+  
+  # KERATINOCYTES
+  "BasalKer" = "#FDBF6F",
+  "inf_BasalKer" = "#F0FFF0",
+  "SuprabasalKer" = "#CAB2D6",
+  "inf_SupraBasal" = "#808000",
+  "TopKer" = "#A6CEE3",
+  "inf_TopKer" = "#87CEEB",
+ # "inf_topKer" = "#B0E0E6",
+  "LC_Basal" = "#FB9A99",
+  
+  # STROMAL
+  "Sebaceous" = "#FFC0CB",
+  "Eccrine" = "#B2DF8A",
+  "muscle" = "#E6E6FA",
+  "Schwann" = "#FFA07A",
+  "Endo" = "#FFF0F5",
+  
+  # FIBROBLASTS
+  "Fib1" = "#FFE4B5",
+  "Fib2" = "#FFFACD",
+  "fib3" = "#D3D3D3",
+  
+  # MIXED/OTHER
+  "RBC_mac_Tc" = "#808080"
+)
+
+# Sort colors
+my_cols4 <- celltype_colors[order(as.character(names(celltype_colors)))]
+```
+
+
+```{r}
+# ============================================
+# Figure 3A-B
+# ============================================
+
+
+# Define topic categories 
+# Immune topics
+immune_topics <- c(
+  "IgM_Plasma",           # Plasma cells (IgM+)
+  "IgA_Plasma",           # Plasma cells (IgA+) 
+  "Neuts",                # Neutrophils
+  "memB",                 # Memory B cells
+  "Plasmablasts",         # Plasmablasts
+  "EarlyPlasma_APC",      # Early plasma/APC
+ # "perifollicular_EarlyPlasma_APC", # Perifollicular early plasma/APC
+  "Teff",                 # Effector T cells
+  "Tcyto",                # T CYTOTOXIC CELLS
+  "Th1_DC",               # Th1/DC
+  "Tcm_DC",               # DC/Th1
+  "Th1",             # Mast/Th1
+  "Cytomono",             # Cytotoxic monocytes
+  "M1_mac",               # M1 macrophages
+  "APC_M1",               # APC/M1
+  "APC_M2Mac",            # APC/M2 macrophages
+  "Act_M2Mac",            # Activated M2 macrophages
+  "Tissue_Repair_M2Mac",  # Tissue repair M2 macrophages
+  "Lipid_macs",           # Lipid-associated macrophages
+ "RBC_mac_Tc",
+  "organised_immune"      # Organized immune structures
+)
+
+# Stromal topics
+stromal_topics <- c(
+  "Sebaceous",            # Sebaceous glands
+  "BasalKer",
+  "inf_BasalKer",         # Inflamed basal keratinocytes
+  "inf_TopKer",           # Inflamed top keratinocytes
+  "inf_SupraBasal",           # Inflamed suprabasal keratinocytes (alternative)
+  "TopKer",               # Top layer keratinocytes
+  "SuprabasalKer",        # Suprabasal keratinocytes
+  "LC_Basal",             # Langerhans cell basal
+  "muscle",               # Smooth muscle
+  "Schwann",              # Schwann cells
+  "Endo",                 # Endothelium
+  "Eccrine",              # Eccrine sweat glands
+  "Fib1",                 # Fibroblasts 1
+  "Fib2",                 # Fibroblasts 2
+  "fib3"                 # Fibroblasts 3
+        
+)
+
+
+
+# Plot stromal topics
+pdf(paste0(save_pathL, "3_C_dimplot_integrated_Eth_cohort_splitby_dominant_groupby_stromal_notrastered.pdf"), 
+    width = 10, height = 8)
+SCpubr::do_DimPlot(integrated_Eth_cohort_filteredL, 
+                   split.by = "dominant_celltype", 
+                   idents.keep = stromal_topics,
+                   legend.position = "none",
+                   font.size = 12, 
+                   pt.size = 0.5, 
+                   colors.use = celltype_colors, 
+                   shuffle = TRUE, 
+                   raster = FALSE, # if turning raster true, adjust pt.size =30
+                   border.size = 0.1)
+dev.off()
+
+
+# Plot immune topics
+pdf(paste0(save_pathL, "3_D_dimplot_integrated_Eth_cohort_splitby_dominant_groupby_immune.pdf"), 
+    width = 12, height = 8)
+SCpubr::do_DimPlot(integrated_Eth_cohort_filteredL, 
+                   split.by = "dominant_celltype", 
+                   idents.keep = immune_topics,
+                   legend.position = "none",
+                   font.size = 12, 
+                   pt.size = 0.5, 
+                   colors.use = celltype_colors, 
+                   shuffle = TRUE, 
+                   raster = FALSE, # if turning raster true, adjust pt.size =30
+                   border.size = 0.1)
+dev.off()
+
+
+
+# Bar plot - spot count per dominant cell type
+pdf(paste0(save_pathL, "S2_D_barplot_spotnumber_dom_celltype.pdf"), width = 10, height = 8)
+p1 <- SCpubr::do_BarPlot(sample = integrated_Eth_cohort_filteredL,
+                         group.by = "dominant_celltype",
+                         legend.position = "none",
+                         plot.title = "Number of spots per dominant cell type", 
+                         colors.use = celltype_colors, 
+                         order = TRUE, 
+                         axis.text.x.angle = 90)
+print(p1)
+dev.off()
+
+```
+
+```{r}
+# ============================================
+# Figure 3 C: Create spatial pie chart visualizations
+# ============================================
+cat("\n=== Creating spatial visualizations ===\n")
+
+# Create sample_mapping for easy plotting of each lesion plot afterwards
+# Get the spots that actually made it through deconvolution
+stdeconv_spotsL <- rownames(deconPropL_combined)  # Spots in deconvolution results
+pos_spotsL <- rownames(pos_lesion)                # Spots in position data
+seurat_spots <- rownames(integrated_Eth_cohort@meta.data)
+
+# Find common spots
+common_spots <- intersect(seurat_spots, stdeconv_spotsL)
+cat("Common spots found:", length(common_spots), "\n")
+
+# Extract sample information from spot barcodes
+get_sample_from_barcode <- function(barcode) {
+  # Extract the sample ID from barcode (e.g., "AAACCGTTCGTCCAGG-1_1" -> "1")
+  sample_id <- sub(".*_", "", barcode)
+  return(sample_id)
+}
+
+# Create sample mapping for spots that survived deconvolution
+sample_mappingL <- data.frame(
+  spot = common_spots,
+  sample = sapply(common_spots, get_sample_from_barcode),
+  stringsAsFactors = FALSE
+)
+
+cat("\nSpots per sample:\n")
+print(table(sample_mappingL$sample))
+
+# Combine immune and stromal ordering
+complete_topic_order <- c(immune_order, stromal_order)
+
+# Custom spatial visualization function with pie charts per spot
+create_custom_spatial_plot <- function(theta, pos, colors, title, topic_order, r = 50) {
+
+  # Convert theta to dataframe and add position information
+  theta_df <- as.data.frame(theta)
+  theta_df$spot_id <- rownames(theta_df)
+  
+  pos_df <- as.data.frame(pos)
+  pos_df$spot_id <- rownames(pos_df)
+  
+  # Combine theta and position data
+  plot_data <- theta_df %>%
+    left_join(pos_df, by = "spot_id")
+  
+  # Get cell type columns (all columns except spot_id, x, y)
+  celltype_cols <- colnames(plot_data)[!colnames(plot_data) %in% c("spot_id", "x", "y")]
+  
+  # Order cell type columns according to topic_order
+  # Keep only columns that exist in the data and order them
+  ordered_cols <- intersect(topic_order, celltype_cols)
+  
+  # Reorder columns in plot_data to match desired order
+  plot_data <- plot_data %>%
+    select(spot_id, x, y, all_of(ordered_cols))
+  
+  # Update celltype_cols to use ordered version
+  celltype_cols <- ordered_cols
+  
+  # Create ordered color palette matching the column order
+  ordered_colors <- colors[celltype_cols]
+  
+  # Create the plot with pie charts
+  p <- ggplot() +
+    geom_scatterpie(aes(x = x, y = y, r = r), 
+                    data = plot_data, 
+                    cols = celltype_cols,
+                    alpha = 0.8,
+                    color = NA) +
+    scale_fill_manual(values = ordered_colors, 
+                     breaks = celltype_cols,
+                     name = "Cell Types") +
+    theme_void() +
+    theme(
+      legend.position = "right",
+      legend.text = element_text(size = 8),
+      legend.title = element_text(size = 10, face = "bold"),
+      plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+      panel.background = element_rect(fill = "white", colour = "white"),
+      plot.background = element_rect(fill = "white", colour = "white")
+    ) +
+    labs(title = title) +
+    coord_fixed() +
+    guides(fill = guide_legend(override.aes = list(size = 3, alpha = 1)))
+  
+  return(p)
+}
+
+cat("\n=== Creating spatial pie chart plots ===\n")
+
+# Define samples to process
+samples <- c("2", "4", "8", "10")
+
+for(sample in samples) {
+  
+  cat("Processing sample", sample, "...\n")
+  
+  # Get spots for this sample
+  sample_spots <- sample_mappingL$spot[sample_mappingL$sample == sample]
+  cat("  Spots in sample:", length(sample_spots), "\n")
+  
+  # Subset position data for this sample
+  pos_sample <- pos_lesion[sample_spots, , drop = FALSE]
+  
+  # Subset deconvolution data for this sample
+  deconProp_sample <- deconPropL_combined[sample_spots, , drop = FALSE]
+  
+  # Create the custom plot with consistent colors and ordered legend
+  plt_custom <- create_custom_spatial_plot(
+    theta = deconProp_sample,
+    pos = pos_sample,
+    colors = celltype_colors,
+    title = paste("Sample", sample, "- Spatial Cell Type Distribution"),
+    topic_order = complete_topic_order,
+    # r = 115
+    r = 130
+  )
+  
+  # Save plot
+  pdf(paste0(save_pathL, "3_C_pieplots_sample_", sample, ".pdf"), width = 12, height = 10)
+  print(plt_custom)
+  dev.off()
+  
+  cat("  Saved pie chart plot for sample", sample, "\n")
+}
+
+cat("\n=== Spatial pie chart plots completed! ===\n")
+```
+
+
+
+```{r}
+# ============================================
+# Figure 3D
+# ============================================
+
+
+cat("\n=== Analyzing topic proportions by patient ===\n")
+
+# Get patient ID metadata for STdeconvolve spots only
+patient_id <- integrated_Eth_cohort_filteredL$sample_id[
+  match(rownames(deconPropL_combined), colnames(integrated_Eth_cohort_filteredL))
+]
+
+cat("Patient ID distribution:\n")
+print(table(patient_id))
+
+# Create data frame with topic proportions and metadata
+topic_by_pid <- data.frame(
+  spot_id = rownames(deconPropL_combined),
+  patient_id = patient_id,
+  stdeconv_matrix
+)
+
+# Save to CSV
+write.csv(topic_by_pid, paste0(save_pathL, "topicprop.csv"), row.names = FALSE)
+
+cat("Saved topic proportions by patient\n")
+
+# Calculate average topic proportions by patient_id
+topic_averages <- topic_by_pid %>%
+  group_by(patient_id) %>%
+  summarise(across(all_of(stdeconv_cols), mean, na.rm = TRUE))
+
+# Normalize to sum to 1.0 for each row
+topic_averages_normalized <- topic_averages %>%
+  rowwise() %>%
+  mutate(
+    row_sum = sum(c_across(all_of(stdeconv_cols)), na.rm = TRUE),
+    across(all_of(stdeconv_cols), ~ .x / row_sum)
+  ) %>%
+  select(-row_sum) %>%
+  ungroup()
+
+# Verify normalization
+cat("\nRow sums (should all be 1.0):\n")
+print(rowSums(topic_averages_normalized[, stdeconv_cols]))
+
+# Reshape normalized data for plotting
+topic_averages_long <- topic_averages_normalized %>%
+  pivot_longer(cols = all_of(stdeconv_cols), 
+               names_to = "topic", 
+               values_to = "average_proportion")
+
+# ============================================
+# Define topic ordering for better visualization
+# ============================================
+
+# Order immune topics by cell type category
+immune_order <- c(
+  # Plasma/B cells
+  "IgM_Plasma",
+  "IgA_Plasma",
+  "Plasmablasts",
+  "EarlyPlasma_APC",
+ # "perifollicular_EarlyPlasma_APC",
+  "memB",
+  
+  # T cells
+  "Teff",
+  "Tcyto",
+  "Th1_DC",
+  "Tcm_DC",
+  "Th1",
+ "RBC_mac_Tc",
+  
+  # Macrophages - M1 types
+  "M1_mac",
+  "APC_M1",
+  "Cytomono",
+  
+  # Macrophages - M2 types
+  "APC_M2Mac",
+  "Act_M2Mac",
+  "Tissue_Repair_M2Mac",
+  "Lipid_macs",
+  
+  # Neutrophils
+  "Neuts",
+  
+  # Other immune
+  "organised_immune"
+)
+
+# Order stromal topics by cell type category
+stromal_order <- c(
+  # Keratinocytes - Basal
+  "LC_Basal",
+  "inf_BasalKer",
+  "BasalKer",
+  
+  # Keratinocytes - Suprabasal
+  "SuprabasalKer",
+  "inf_SupraBasal", 
+  
+  # Keratinocytes - Top
+  "TopKer",
+  "inf_TopKer",
+ 
+  
+  # Glands
+  "Sebaceous",
+  "Eccrine",
+  
+  # Fibroblasts
+  "Fib1",
+  "Fib2",
+  "fib3",
+  
+  # Structural/Support
+  "Endo",
+  "muscle",
+  "Schwann"
+)
+
+# All topics stacked bar chart
+cat("\n=== Creating stacked bar charts ===\n")
+
+pdf(paste0(save_pathL, "topic_prop_stacked_bar_chart.pdf"))
+p4 <- ggplot(topic_averages_long, aes(x = patient_id, y = average_proportion, fill = topic)) +
+  geom_col(position = "stack", color = "white", linewidth = 0.1) +
+  scale_fill_manual(values = my_cols4, name = "Topic") +
+  scale_y_continuous(labels = scales::percent_format(), 
+                     expand = c(0, 0)) +
+  labs(title = "Topic Proportions by Patient ID",
+       x = "Patient ID",
+       y = "Proportion (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        legend.position = "right")
+print(p4)
+dev.off()
+
+# Filter and order immune topics
+topic_averages_immune_long <- topic_averages_long %>%
+  filter(topic %in% immune_topics) %>%
+  mutate(topic = factor(topic, levels = immune_order))
+
+# Filter and order stromal topics
+topic_averages_stromal_long <- topic_averages_long %>%
+  filter(topic %in% stromal_topics) %>%
+  mutate(topic = factor(topic, levels = stromal_order))
+
+# Immune population chart with ordered topics
+pdf(paste0(save_pathL, "3_D_stackerbarchart_immunepop_splitbyorigID.pdf"), width = 10, height = 8)
+p_immune_faceted <- ggplot(topic_averages_immune_long, 
+                           aes(x = patient_id, y = average_proportion, fill = topic)) +
+  geom_col(position = "stack", color = "white", linewidth = 0.1) +
+  scale_fill_manual(values = my_cols4, name = "Immune Topics") +
+  scale_y_continuous(labels = scales::percent_format(), 
+                     expand = c(0, 0)) +
+  labs(title = "Immune Population Proportions by Patient ID",
+       subtitle = "Grouped: Plasma/B cells → T cells → Macrophages → Neutrophils",
+       x = "Patient ID",
+       y = "Proportion (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 10, color = "gray40"),
+        legend.position = "right")
+print(p_immune_faceted)
+dev.off()
+
+# Stromal population chart with ordered topics
+pdf(paste0(save_pathL, "3_D_stackerbarchart_strompop_splitbyorigID.pdf"), width = 10, height = 8)
+p_stromal_faceted <- ggplot(topic_averages_stromal_long, 
+                            aes(x = patient_id, y = average_proportion, fill = topic)) +
+  geom_col(position = "stack", color = "white", linewidth = 0.1) +
+  scale_fill_manual(values = my_cols4, name = "Stromal Topics") +
+  scale_y_continuous(labels = scales::percent_format(), 
+                     expand = c(0, 0)) +
+  labs(title = "Stromal Population Proportions by Patient ID",
+       subtitle = "Grouped: Keratinocytes → Glands → Fibroblasts → Structural",
+       x = "Patient ID",
+       y = "Proportion (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 10, color = "gray40"),
+        legend.position = "right")
+print(p_stromal_faceted)
+dev.off()
+
+
+cat("\n=== Topic proportion analysis completed! ===\n")
+```
+
+

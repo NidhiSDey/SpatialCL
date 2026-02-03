@@ -1,0 +1,1111 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-11-17"
+---
+
+```{r setup, include=FALSE}
+
+# ==============================================================================
+# STdeconvolve Analysis for lesion only- Topic Modeling for Spatial Deconvolution
+# ==============================================================================
+# This script performs Latent Dirichlet Allocation (LDA) topic modeling to
+# deconvolve cell types from lesion samples
+# input: "Eth4mm_renamed_res_addedabundances_pid_sampleid_tratio0.6dims1_15_cohort.Rds"
+# output: 1. lda file with 26-52 topics: "lesion_26_52topics_stdeconv.rds", 2. final Seurat obj with final selected (and combined) 35 topics added: Lesion_integrated_Eth_cohort_filtered_35_stdeconvTopics_reclus_relabelled_COMBINED_dominantTopic_added.rds"
+#code for Figure 3,  S2 and Supplementary Table 2
+# ==============================================================================
+# Load required libraries
+library(patchwork)
+library(Seurat)
+library(sqldf)
+library(dplyr)
+library(RColorBrewer)
+library(ggpubr)
+library(clustree)
+library(data.table)
+library(plotly)
+library(ggplot2)
+library(spatstat)
+library(gplots)
+library(corrplot)
+library(stringr)
+library(VennDiagram)
+library(grid)
+library(reshape2)
+library(cowplot)
+library(EnhancedVolcano)
+library(future)
+library(jsonlite)
+library(STdeconvolve)
+library(ggrepel)
+library(gridExtra)
+library(tidyr)
+
+# Define study parameters
+study_name <- "ethiopian4mm_cohort"
+study_path <- "F:/SD23.9.2_Dioraphte_Ethiopian_4mm_ND23.09/"
+
+# Define samples (removed patient 5 lesion and non lesional)
+samples <- c("392_1_2", "392_1_4", "393_3_2", "393_3_4", 
+             "391_4_2", "391_4_4", "392_5_2", "392_5_4",
+             "391_7_2", "391_7_4")
+
+sample_group <- rep(c("healthy", "lesion"), 5)
+disease_group <- c("MCL", "healthy", "LCL", "healthy", "MCL", 
+                   "healthy", "LCL", "healthy", "DCL", "healthy")
+
+# Define paths
+read_path <- paste0(study_path, "R/No_P5/")
+save_pathL <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_sep/lesion/iteration_nov2025/test/")
+
+
+# Create directories if they don't exist (FIXED: removed quotes)
+if(!dir.exists(save_pathL)) {
+  dir.create(save_pathL, recursive = TRUE)
+}
+```
+
+
+```{r Read integrated cohort data}
+# Read integrated cohort data
+integrated_Eth_cohort <- readRDS(paste0(read_path, 
+  "Eth4mm_renamed_res_addedabundances_pid_sampleid_tratio0.6dims1_15_cohort.Rds"))
+```
+
+
+
+```{r Extract count matrix and spatial coordinates}
+# ===== Extract count matrix and spatial coordinates =====
+
+
+# 1. Extract count matrix (sparse format)
+cd <- LayerData(integrated_Eth_cohort, assay = "Spatial", layer = "counts")
+cat("Count matrix dimensions:", dim(cd), "\n")  # Expected: 5578 spots x 17943 genes
+
+# 2. Extract spatial coordinates
+image_names <- Images(integrated_Eth_cohort)
+print(image_names)
+
+all_coords <- list()
+for(i in 1:length(image_names)) {
+  coords <- GetTissueCoordinates(integrated_Eth_cohort, image = image_names[i])
+  all_coords[[i]] <- coords
+}
+
+# Combine all coordinates
+pos <- do.call(rbind, all_coords)
+print(head(pos))
+
+# Cleanup column names in pos
+pos <- pos %>%
+  select(-cell) %>%
+  select(y, x)
+
+cat("Position matrix dimensions:", dim(pos), "\n")  # Should be 5578 spots
+
+# ===== Extract lesion-specific data =====
+lesion_spotid <- integrated_Eth_cohort$spot_id[integrated_Eth_cohort$group == "lesion"]
+pos_lesion <- pos[lesion_spotid, ]
+cd_lesion <- cd[, lesion_spotid]
+
+# Visualize gene counts across lesion spots
+df_lesion <- data.frame(pos_lesion, libsize = colSums(cd_lesion)[rownames(pos_lesion)])
+df_lesion$sample <- sub(".*_", "", rownames(df_lesion))  # Extract sample ID
+
+cat("Samples found:\n")
+print(table(df_lesion$sample))
+
+# Plot library size across samples
+df_lesion$log_libsize <- log10(df_lesion$libsize + 1)
+
+ggplot(df_lesion, aes(x = x, y = y, color = libsize)) + 
+  geom_point(size = 0.6, alpha = 0.9) +
+  scale_color_distiller(name = "Library\nSize", palette = "RdYlBu", direction = -1) +
+  facet_wrap(~sample, labeller = labeller(sample = function(x) paste("Sample", x))) +
+  theme_minimal() +
+  labs(title = "Library size across all 5 lesion samples",
+       x = "X coordinate", 
+       y = "Y coordinate") +
+  theme(axis.text = element_text(size = 8),
+        strip.text = element_text(size = 10))
+```
+
+
+
+```{r create corpus for stdeconvolve}
+
+cat("\n========================================\n")
+cat("Starting STdeconvolve Analysis\n")
+cat("========================================\n")
+
+# Step 1: Clean counts
+cat("\nStep 1: Cleaning counts...\n")
+cat("Original dimensions:", dim(cd_lesion), "\n")
+
+counts_lesion <- cleanCounts(cd_lesion, min.lib.size = 100, min.reads = 10, plot = TRUE)
+cat("After cleaning:", dim(counts_lesion), "\n")
+
+# Step 2: Remove KRT and IG genes
+cat("\nStep 2: Removing KRT and IG genes...\n")
+krt_genes <- grep("^KRT", rownames(counts_lesion), value = TRUE)
+Ig_genes <- grep("^IGH|^IGL|^IGK", rownames(counts_lesion), value = TRUE)  
+krt_Ig_genes <- c(krt_genes, Ig_genes)
+
+cat("Keratin genes found:", length(krt_genes), "\n")
+cat("Immunoglobulin genes found:", length(Ig_genes), "\n")
+cat("Total genes to remove:", length(krt_Ig_genes), "\n")
+
+counts_no_krt_ig <- counts_lesion[!rownames(counts_lesion) %in% krt_Ig_genes, ]
+cat("After KRT and IG removal:", dim(counts_no_krt_ig), "\n")
+
+# Step 3: Select overdispersed genes
+cat("\nStep 3: Selecting overdispersed genes...\n")
+od_genes_lesion <- restrictCorpus(
+  counts_no_krt_ig, 
+  removeAbove = 0.95,
+  removeBelow = 0.01,
+  alpha = 0.05,
+  nTopOD = NA,  # Use all OD genes
+  plot = TRUE,
+  verbose = TRUE
+)
+
+# Step 4: Define cell type marker genes
+cat("\nStep 4: Defining marker genes...\n")
+T_genes <- unique(c(
+  # T cell markers
+  "IL7R", "MAL", "LTB", "CD4", "LDHB", "TPT1", "TRAC", "TMSB10", 
+  "CD3D", "CD3G", "CD8B", "CD8A", "HCST", "LINC02446", "CTSW", "CD3E", 
+  "NKG7", "KLRD1", "TYROBP", "GNLY", "FCER1G", "PRF1", "CD247", "KLRF1", 
+  "CST7", "GZMB", "TRDC", "GZMK", "KLRB1", "TRGC2", "LYAR", "KLRG1", 
+  "GZMA", "GZMH", "FGFBP2", "ITGB1", "B2M", "IL32", "TCF7", "CCR7", 
+  "FHIT", "LEF1", "NOSIP", "PIK3IP1", "AQP3", "CCL5", "FYB1", "RTKN2", 
+  "FOXP3", "AC133644.2", "IL2RA", "TIGIT", "CTLA4", "FCRL3", "LAIR2", 
+  "IKZF2", "S100B", "RGS10", "CRTAM", "OXNAD1", "ANXA1", "KRT1", 
+  "YBX3", "NELL2", "KLRK1", "TRBC1", "TRBC2", "TRBJ2-2", "CXCR3",
+  
+  # B cell specific markers
+  "MS4A1", "CD79A", "CD79B", "IGHM", "IGHA1", 
+  
+  # Neutrophil signature
+  "CSF3R", "CMTM2", "FCGR3B", "CXCR2", "ELANE", "MPO", "LCN2", "CAMP", 
+  "PROK2", "LINC01506"
+))
+
+cat("Total unique marker genes defined:", length(T_genes), "\n")
+
+# Step 5: Combine OD genes with marker genes
+cat("\nStep 5: Combining OD and marker genes...\n")
+top_od <- rownames(od_genes_lesion)
+final_Tgenes <- T_genes[T_genes %in% rownames(counts_lesion)]
+final_genes <- unique(c(final_Tgenes, top_od))
+
+cat("Marker genes found in data:", length(final_Tgenes), "\n")
+cat("OD genes:", length(top_od), "\n")
+cat("Total final genes:", length(final_genes), "\n")
+
+# Step 6: Create final corpus
+cat("\nStep 6: Creating final corpus...\n")
+final_genes_in_counts <- final_genes[final_genes %in% rownames(counts_lesion)]
+corpus <- counts_lesion[final_genes_in_counts, ]
+
+cat("Final corpus dimensions:", dim(corpus), "\n")
+```
+
+
+# ```{r Fit and save LDA models}
+# # Step 7: Fit LDA models
+# cat("\nStep 7: Fitting LDA models...\n")
+# set.seed(0)
+# ldasl26_52 <- fitLDA(
+#   t(as.matrix(corpus)), 
+#   Ks = seq(26, 52, by = 2),  # Or use a range: Ks = seq(46, 52, by = 2)
+#   plot = TRUE, 
+#   ncores = 12,
+#   verbose = TRUE
+# )
+# 
+# cat("\n========================================\n")
+# cat("STdeconvolve Analysis Complete!\n")
+# cat("========================================\n")
+# 
+# # Save results
+# saveRDS(ldasl26_52, 
+#         paste0(save_pathL, "lesion_26_52topics_stdeconv.rds"))
+# cat("Results saved to:", paste0(save_pathL, "lesion_26_52topics_stdeconv.rds\n"))
+# ```
+
+
+
+
+```{r read results and save deconvolution lists}
+# Read the LDA results
+ldas_list <- readRDS(paste0(save_pathL, "lesion_26_52topics_stdeconv.rds"))
+
+# Get best model results
+optLDAL <- optimalModel(models = ldas_list, opt = "50")
+
+# Extract deconvolved cell-type proportions (theta) and transcriptional profiles (beta)
+resultsL <- getBetaTheta(optLDAL, perc.filt = 0.05, betaScale = 1000)
+deconPropL <- resultsL$theta
+deconGexpL <- resultsL$beta
+
+# Get and print top genes
+top_genes_L <- topGenes(deconGexpL)
+print(top_genes_L)
+
+cat("Saved deconvolution results for lesion samples with K=50\n")
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r gene expression per topic and plots}
+
+# ------ PART 1: Get top 30 genes for each topic ------
+all_top30_genes <- list()
+all_top30_tables <- list()
+n_topics <- nrow(deconGexpL)
+for(celltype in 1:n_topics) {
+  
+  ## Find highly expressed genes in this topic
+  highgexp <- names(which(deconGexpL[celltype,] > 3))
+  
+  ## Calculate log2(fold-change) compared to other topics
+  if(n_topics == 1) {
+    # Handle single topic case
+    log2fc <- sort(log2(deconGexpL[celltype, highgexp] + 1), decreasing = TRUE)
+  } else {
+    log2fc <- sort(
+      log2(deconGexpL[celltype, highgexp]/
+             colMeans(deconGexpL[-celltype, highgexp])), 
+      decreasing = TRUE
+    )
+  }
+  
+  ## Get top 40 genes (or fewer if less than 40 available)
+  n_genes <- min(40, length(log2fc))
+  
+  if(n_genes == 0) {
+    cat("  WARNING: Topic", celltype, "has no genes with expression > 3\n")
+    next
+  }
+  
+  top_genes <- names(log2fc)[1:n_genes]
+  top_fc <- log2fc[1:n_genes]
+  
+  ## Store in list for easy access
+  all_top30_genes[[paste0("Topic_", celltype)]] <- top_genes
+  
+  ## Create detailed table
+  if(n_topics == 1) {
+    mean_other <- rep(0, n_genes)  # No other topics to compare
+  } else {
+    mean_other <- colMeans(deconGexpL[-celltype, top_genes])
+  }
+  
+  top_table <- data.frame(
+    Sample = "Lesion",
+    Topic = paste0("Topic_", celltype),
+    Rank = 1:n_genes,
+    Gene = top_genes,
+    Log2FC = round(top_fc, 3),
+    Expression_This_Topic = round(deconGexpL[celltype, top_genes], 3),
+    Mean_Expression_Other_Topics = round(mean_other, 3),
+    stringsAsFactors = FALSE
+  )
+  
+  all_top30_tables[[paste0("Topic_", celltype)]] <- top_table
+  
+  cat("  Topic", celltype, ":", n_genes, "genes found\n")
+}
+
+# Combine all tables into one comprehensive table
+combined_table <- do.call(rbind, all_top30_tables)
+rownames(combined_table) <- NULL
+
+# Save comprehensive table (FIXED: dynamic filename)
+write.csv(combined_table, 
+          paste0(save_pathL, "lesion_", n_topics, "_topics_top40_genes.csv"), 
+          row.names = FALSE)
+
+cat("Analysis complete! Saved results for", n_topics, "topics\n")
+```
+
+```{r label topics after assessing gene expression}
+# ============================================
+# STEP 1: Define topic names (UPDATE AFTER EXAMINING RESULTS)
+# ============================================
+
+# Placeholder topic names - UPDATE THESE after examining top genes
+topic_names <- c(
+  "SuprabasalKer",      #1
+  "Eccrine",            #2
+  "LC_Basal",           #3
+  "Cytomono",           #4
+  "Endo",               #5
+  "Sebaceous",          #6
+  "APC_M1",             #7
+  "inf_TopKer",         #8
+  "Fib1",               #9
+  "IgM_Plasma",         #10
+  "inf_BasalKer",       #11
+  "EarlyPlasma_APC",         #12
+  "TopKer",             #13
+  "Act_M2Mac",          #14
+  "Neuts",              #15
+  "Th1_DC",             #16
+  "IgA_Plasma",         #17
+  "Plasmablasts",       #18
+  "muscle",             #19
+  "Schwann",            #20
+  "muscle",             #21
+  "SuprabasalKer",      #22
+  "EarlyPlasma_APC",         #23
+  "inf_BasalKer",       #24
+  "Eccrine",            #25
+  "inf_SupraBasal",     #26
+  "M1_mac",             #27
+  "Fib2",               #28
+  "IgM_Plasma",         #29
+  "inf_SupraBasal",     #30
+  "BasalKer",           #31
+  "APC_M2Mac",          #32
+  "inf_TopKer",         #33
+  "Tissue_Repair_M2Mac",#34
+  "BasalKer",           #35
+  "fib3",               #36
+  "inf_SupraBasal",     #37
+  "Lipid_macs",         #38
+  "Tcm_DC",             #39
+  "memB",               #40
+  "organised_immune",   #41
+  "LC_Basal",           #42
+  "Th1",           #43
+  "inf_SupraBasal",     #44
+  "inf_SupraBasal",     #45
+  "Tcyto",                 #46
+  "RBC_mac_Tc",             #47
+  "Sebaceous",          #48
+  "Teff",               #49
+  "SuprabasalKer"       #50
+)
+
+# Get number of topics from data
+n_topics <- nrow(deconGexpL)
+
+# Verify length matches
+if(length(topic_names) != n_topics) {
+  stop("ERROR: Number of topic names (", length(topic_names), 
+       ") does not match number of topics in data (", n_topics, ")")
+}
+
+cat("Topic names defined:", length(topic_names), "topics\n")
+
+# ============================================
+# STEP 2: Apply topic names to matrices
+# ============================================
+
+# Check dimensions
+cat("Original deconGexpL dimensions:", dim(deconGexpL), "\n")
+cat("Original deconPropL dimensions:", dim(deconPropL), "\n")
+
+# Apply topic names
+rownames(deconGexpL) <- topic_names
+colnames(deconPropL) <- topic_names
+
+# Verify
+cat("\nAfter renaming:\n")
+cat("deconGexpL rownames:", head(rownames(deconGexpL), 3), "...\n")
+cat("deconPropL colnames:", head(colnames(deconPropL), 3), "...\n")
+
+
+```
+```{r}
+# ============================================
+# Combine topics with duplicate names
+# ============================================
+
+cat("\n=== Combining duplicate topics ===\n")
+
+# Check for duplicates
+cat("Original number of topics:", nrow(deconGexpL), "\n")
+
+cat("Duplicate topic names:", 
+    paste(unique(rownames(deconGexpL)[duplicated(rownames(deconGexpL))]), collapse = ", "), "\n")
+
+# ============================================
+# PART 1: Combine gene expression (deconGexp)
+# Method: Average gene expression for duplicate topics
+# ============================================
+
+deconGexpL_combined <- deconGexpL
+
+# Get unique duplicated rownames
+unique_rows <- unique(rownames(deconGexpL))
+duplicated_rows <- unique_rows[unique_rows %in% rownames(deconGexpL)[duplicated(rownames(deconGexpL))]]
+
+# Combine duplicated topics
+for (dup_row in duplicated_rows) {
+  
+  # Find all indices with this topic name
+  dup_indices <- which(rownames(deconGexpL_combined) == dup_row)
+  
+  if (length(dup_indices) > 1) {
+    
+    # Average gene expression across duplicate topics
+    combined_topic <- colMeans(deconGexpL_combined[dup_indices, , drop = FALSE])
+    
+    # Remove original duplicated rows
+    deconGexpL_combined <- deconGexpL_combined[-dup_indices, , drop = FALSE]
+    
+    # Add combined topic back
+    deconGexpL_combined <- rbind(deconGexpL_combined, combined_topic)
+    
+    # Restore topic name
+    rownames(deconGexpL_combined)[nrow(deconGexpL_combined)] <- dup_row
+    
+    cat("Combined", length(dup_indices), "instances of", dup_row, 
+        "by averaging gene expression\n")
+  }
+}
+
+cat("Gene expression matrix after combining:", nrow(deconGexpL_combined), "topics\n")
+#36 topics
+# ============================================
+# PART 2: Combine proportions (deconProp)
+# Method: Sum proportions for duplicate topics
+# ============================================
+
+deconPropL_combined <- deconPropL
+
+# Get unique duplicated colnames
+unique_cols <- unique(colnames(deconPropL))
+duplicated_cols <- unique_cols[unique_cols %in% colnames(deconPropL_combined)[duplicated(colnames(deconPropL_combined))]]
+
+# Combine duplicated topics
+for (dup_col in duplicated_cols) {
+  
+  # Find all indices with this topic name
+  dup_indices <- which(colnames(deconPropL_combined) == dup_col)
+  
+  if (length(dup_indices) > 1) {
+    
+    # Sum proportions across duplicate topics
+    combined_topic <- rowSums(deconPropL_combined[, dup_indices, drop = FALSE])
+    
+    # Remove original duplicated columns
+    deconPropL_combined <- deconPropL_combined[, -dup_indices, drop = FALSE]
+    
+    # Add combined topic back
+    deconPropL_combined <- cbind(deconPropL_combined, combined_topic)
+    
+    # Restore topic name
+    colnames(deconPropL_combined)[ncol(deconPropL_combined)] <- dup_col
+    
+    cat("Combined", length(dup_indices), "instances of", dup_col, 
+        "by summing proportions\n")
+  }
+}
+
+cat("Proportion matrix after combining:", ncol(deconPropL_combined), "topics\n")
+
+# Verify no duplicates remain
+cat("\nDuplicates remaining in gene expression:", 
+    any(duplicated(rownames(deconGexpL_combined))), "\n")
+cat("Duplicates remaining in proportions:", 
+    any(duplicated(colnames(deconPropL_combined))), "\n")
+
+# ============================================
+# PART 3: Save combined results
+# ============================================
+
+# Get actual combined topic count
+n_topics_combined <- nrow(deconGexpL_combined)
+
+cat("\nSaved combined deconvolution matrices with", n_topics_combined, "topics\n")
+```
+
+
+```{r}
+# ============================================
+# PART 4: Supplementary Figure 2A-B
+# ============================================
+
+ps_combined <- lapply(1:n_topics_combined, function(celltype) {
+  # Highly expressed genes
+  highgexp <- names(which(deconGexpL_combined[celltype,] > 3))
+  
+  # Calculate log2(fold-change)
+  log2fc <- sort(log2(deconGexpL_combined[celltype, highgexp] /
+                        colMeans(deconGexpL_combined[-celltype, highgexp])),
+                 decreasing = TRUE)
+  
+  # Get top 6 genes for labeling
+  n_label <- min(6, length(log2fc))
+  markers <- names(log2fc)[1:n_label]
+  
+  # Create data frame for plotting
+  dat <- data.frame(
+    values = as.vector(log2fc),
+    genes = names(log2fc),
+    order = seq(length(log2fc))
+  )
+  
+  # Label top 6 genes
+  dat$selectedLabels <- ""
+  dat$selectedLabels[1:n_label] <- markers
+  dat$rank <- NA
+  dat$rank[1:n_label] <- 1:n_label
+  
+  # Create data frames for labels
+  dat_labels <- dat[dat$selectedLabels != "", ]
+  
+  # Create legend text (format: "1 = GeneA")
+  legend_text <- paste(1:n_label, markers, sep = " ")
+  legend_label <- paste(legend_text, collapse = "\n")
+  
+  # Use topic name from combined matrix
+  topic_name <- rownames(deconGexpL_combined)[celltype]
+  
+  plt <- ggplot2::ggplot(data = dat) +
+    ggplot2::geom_col(
+      ggplot2::aes(x = order, y = values,
+                   fill = factor(selectedLabels == ""),
+                   color = factor(selectedLabels == "")),
+      width = 1
+    ) +
+    ggplot2::scale_fill_manual(values = c("red", "darkblue")) +
+    ggplot2::scale_color_manual(values = c("red", "darkblue")) +
+    ggplot2::scale_y_continuous(
+      expand = c(0, 0),
+      limits = c(min(log2fc) - 0.3, max(log2fc) + 0.3)
+    ) +
+    # Add rank numbers on top of bars
+    # ggplot2::geom_text(
+    #   data = dat_labels,
+    #   ggplot2::aes(x = order, y = values, label = rank),
+    #   vjust = ifelse(dat_labels$values > 0, -0.5, 1.5),
+    #   color = "black",
+    #   size = 6,
+    #   fontface = "bold"
+    # ) +
+    # Add legend annotation in top-right corner
+    ggplot2::annotate(
+      "text",
+      x = max(dat$order),
+      y = max(log2fc) + 0.2,
+      label = legend_label,
+      hjust = 1,
+      vjust = 1,
+      size = 6,
+      color = "black",
+      fontface = "italic",
+      lineheight = 0.9
+    ) +
+    ggplot2::labs(
+      title = topic_name,
+      x = "Gene expression rank",
+      y = "log2(FC)"
+    ) +
+    ggplot2::theme_classic() +
+    ggplot2::theme(
+      axis.text.x = ggplot2::element_text(size = 15, color = "black"),
+      axis.text.y = ggplot2::element_text(size = 15, color = "black"),
+      axis.title.y = ggplot2::element_text(size = 15, color = "black"),
+      axis.title.x = ggplot2::element_text(size = 15, color = "black"),
+      axis.ticks.x = ggplot2::element_blank(),
+      plot.title = ggplot2::element_text(size = 15, face = "plain"),
+      panel.background = ggplot2::element_blank(),
+      plot.background = ggplot2::element_blank(),
+      panel.grid.major.y = ggplot2::element_line(linewidth = 0.3, colour = "gray80"),
+      axis.line = ggplot2::element_line(linewidth = 1, colour = "black"),
+      legend.position = "none"
+    )
+  
+  plt
+})
+
+# Create grid layout
+n_cols <- 4
+n_rows <- ceiling(n_topics_combined / n_cols)
+layout_mat <- matrix(1:(n_rows * n_cols), nrow = n_rows, ncol = n_cols, byrow = TRUE)
+# Save combined topics plot (FIXED: dynamic filename)
+pdf(paste0(save_pathL, "S2A_B_lesion_", n_topics_combined, "topics_COMBINED_top6genes.pdf"), 
+    width = 16, height = 4 * n_rows)
+gridExtra::grid.arrange(grobs = ps_combined, layout_matrix = layout_mat)
+dev.off()
+cat("Saved combined topics plot with", n_topics_combined, "topics\n")
+
+# ============================================
+# PART 5: Generate top 40 genes for combined topics
+# ============================================
+
+all_top40_genes_combined <- list()
+all_top40_tables_combined <- list()
+
+for(celltype in 1:n_topics_combined) {
+  
+  topic_name <- rownames(deconGexpL_combined)[celltype]
+  
+  # Find highly expressed genes
+  highgexp <- names(which(deconGexpL_combined[celltype,] > 3))
+  
+  # Calculate log2(fold-change)
+  log2fc <- sort(
+    log2(deconGexpL_combined[celltype, highgexp] / 
+           colMeans(deconGexpL_combined[-celltype, highgexp])), 
+    decreasing = TRUE
+  )
+  
+  # Get top 40 genes
+  n_genes <- min(40, length(log2fc))
+  top_genes <- names(log2fc)[1:n_genes]
+  top_fc <- log2fc[1:n_genes]
+  
+  # Store in list
+  all_top40_genes_combined[[topic_name]] <- top_genes
+  
+  # Create detailed table
+  mean_other <- colMeans(deconGexpL_combined[-celltype, top_genes])
+  
+  top_table <- data.frame(
+    Sample = "Lesion",
+    Topic_Number = celltype,
+    Topic_Name = topic_name,
+    Rank = 1:n_genes,
+    Gene = top_genes,
+    Log2FC = round(top_fc, 3),
+    Expression_This_Topic = round(deconGexpL_combined[celltype, top_genes], 3),
+    Mean_Expression_Other_Topics = round(mean_other, 3),
+    stringsAsFactors = FALSE
+  )
+  
+  all_top40_tables_combined[[topic_name]] <- top_table
+  
+  cat("  ", topic_name, ":", n_genes, "genes found\n")
+}
+
+# Combine all tables
+combined_table <- do.call(rbind, all_top40_tables_combined)
+rownames(combined_table) <- NULL
+
+# Save results (FIXED: dynamic filenames)
+write.csv(combined_table, 
+          paste0(save_pathL, "lesion_", n_topics_combined, "topics_COMBINED_top40_genes.csv"), 
+          row.names = FALSE)
+
+```
+
+```{r}
+# ============================================
+# Create Supplementary Table 2 with Topic Descriptions and Top 30 Genes
+# ============================================
+
+# ============================================
+# STEP 1: Define topic name to description mapping
+# ============================================
+
+topic_descriptions <- data.frame(
+  Topic_Name = c(
+    "LC_Basal",
+    "Endo",
+    "SuprabasalKer",
+    "Schwann",
+    "inf_TopKer",
+    "inf_BasalKer",
+    "inf_SupraBasal",
+    "EarlyPlasma_APC",
+    "Eccrine",
+    "Act_M2Mac",
+    "APC_M2Mac",
+    "M1_mac",
+    "Lipid_macs",
+    "BasalKer",
+    "Teff",
+    "Tcyto",
+    "Tcm_DC",
+    "Th1",
+    "Th1_DC",
+    "Cytomono",
+    "Plasmablasts",
+    "IgA_Plasma",
+    "IgM_Plasma",
+    "memB",
+    "Neuts",
+    "TopKer",
+    "muscle",
+    "Tissue_Repair_M2Mac",
+    "Sebaceous",
+    "Fib1",
+    "Fib2",
+    "fib3",
+    "organised_immune",
+    "RBC_mac_Tc",
+    "APC_M1"
+  ),
+  Description = c(
+    "Langerhans cells (Basal layer)",
+    "Vascular endothelial cells",
+    "Supra-basal layer Keratinocytes",
+    "Schwann cells",
+    "Inflamed Top layer Keratinocytes",
+    "Inflamed Basal layer Keratinocytes",
+    "Inflamed Supra-basal Keratinocytes",
+    "Antigen Presenting Cells / Early Plasma cells",
+    "Eccrine sweat glands",
+    "Activated M2 Macrophages",
+    "Antigen Presenting M2 Macrophages",
+    "Pro-inflammatory M1 Macrophages",
+    "Lipid-laden Macrophages",
+    "Basal layer Keratinocytes",
+    "Effector T cells",
+    "Cytotoxic T cells",
+    "Central memory T cells / Dendritic cells",
+    "T helper 1 cells",
+    "T helper 1 cells / Dendritic cells",
+    "Cytotoxic monocytes",
+    "Plasmablast cells",
+    "IgA-producing Plasma cells",
+    "IgM-producing Plasma cells",
+    "Memory B cells",
+    "Neutrophils",
+    "Top layer Keratinocytes",
+    "Muscle cells",
+    "Tissue repair M2 Macrophages",
+    "Sebaceous gland cells",
+    "Fibroblasts (type 1)",
+    "Fibroblasts (type 2)",
+    "Fibroblasts (type 3)",
+    "Organized immune infiltrate (mixed)",
+    "Red blood cell-associated Macrophages / T cells",
+    "Antigen Presenting M1 Macrophages"
+  ),
+  stringsAsFactors = FALSE
+)
+
+# ============================================
+# STEP 2: Read the top 40 genes data
+# ============================================
+
+cat("Reading top genes data...\n")
+top_genes_data <- read.csv(paste0(read_path, "lesion_35topics_COMBINED_top40_genes.csv"),
+                           stringsAsFactors = FALSE)
+
+cat("Data dimensions:", nrow(top_genes_data), "rows,", ncol(top_genes_data), "columns\n")
+cat("Unique topics:", length(unique(top_genes_data$Topic_Name)), "\n")
+
+# ============================================
+# STEP 3: Extract top 30 genes for each topic
+# ============================================
+
+cat("\nExtracting top 30 genes per topic...\n")
+
+# Filter to top 30 genes per topic
+top30_genes <- top_genes_data %>%
+  group_by(Topic_Name) %>%
+  filter(Rank <= 30) %>%
+  ungroup()
+
+# Create wide format with genes as columns
+supp_table <- top30_genes %>%
+  select(Topic_Name, Rank, Gene) %>%
+  pivot_wider(
+    names_from = Rank,
+    values_from = Gene,
+    names_prefix = "Gene_"
+  )
+
+# ============================================
+# STEP 4: Add descriptions
+# ============================================
+
+cat("Adding topic descriptions...\n")
+
+supp_table_final <- supp_table %>%
+  left_join(topic_descriptions, by = "Topic_Name") %>%
+  select(Topic_Name, Description, everything())
+
+# Reorder columns to have description as second column
+gene_cols <- grep("^Gene_", colnames(supp_table_final), value = TRUE)
+supp_table_final <- supp_table_final %>%
+  select(Topic_Name, Description, all_of(gene_cols))
+
+# ============================================
+# STEP 5: Sort by topic type (cell lineage)
+# ============================================
+
+# Define order for better organization
+topic_order <- c(
+  # Keratinocytes
+  "BasalKer", "SuprabasalKer", "TopKer",
+  "inf_BasalKer", "inf_SupraBasal", "inf_TopKer",
+  
+  # Immune cells - Myeloid
+  "LC_Basal",
+  "M1_mac", "APC_M1",
+  "Act_M2Mac", "APC_M2Mac", "Tissue_Repair_M2Mac",
+  "Lipid_macs",
+  "Cytomono",
+  "Neuts",
+  "Th1_DC", "Tcm_DC",
+  
+  # Immune cells - Lymphoid
+  "Th1", "Teff", "Tcyto",
+  "memB",
+  "Plasmablasts", "IgA_Plasma", "IgM_Plasma",
+  "EarlyPlasma_APC",
+  "organised_immune",
+  "RBC_mac_Tc",
+  
+  # Fibroblasts
+  "Fib1", "Fib2", "fib3",
+  
+  # Endothelial
+  "Endo",
+  
+  # Other structural
+  "Schwann",
+  "muscle",
+  
+  # Glands
+  "Eccrine",
+  "Sebaceous"
+)
+
+# Apply ordering
+supp_table_final$Topic_Name <- factor(supp_table_final$Topic_Name, 
+                                       levels = topic_order)
+supp_table_final <- supp_table_final %>%
+  arrange(Topic_Name) %>%
+  mutate(Topic_Name = as.character(Topic_Name))
+
+# ============================================
+# STEP 6: Add topic numbering
+# ============================================
+
+supp_table_final <- supp_table_final %>%
+  mutate(Topic_Number = row_number()) %>%
+  select(Topic_Number, everything())
+
+# ============================================
+# STEP 7: Save the supplementary table
+# ============================================
+
+output_file <- paste0(save_path, "Supplementary_Table2__STdeconvolve_Topics.csv")
+write.csv(supp_table_final, output_file, row.names = FALSE)
+
+cat("\n=== Supplementary Table Created ===\n")
+cat("File saved to:", output_file, "\n")
+cat("Total topics:", nrow(supp_table_final), "\n")
+cat("Columns:", ncol(supp_table_final), "\n")
+
+
+```
+
+
+```{r}
+# ============================================
+# Add STdeconvolve proportions to Seurat object
+# ============================================
+
+# Subset the Seurat object to only include STdeconvolve spots
+stdeconv_spotsL <- rownames(deconPropL_combined)
+integrated_Eth_cohort_filteredL <- subset(integrated_Eth_cohort, 
+                                          cells = stdeconv_spotsL)
+
+print(paste("Filtered Seurat object:", ncol(integrated_Eth_cohort_filteredL)))
+
+# Verify alignment
+print("Spot names match:")
+print(identical(rownames(integrated_Eth_cohort_filteredL@meta.data), 
+                rownames(deconPropL_combined)))
+
+combined_topics <- colnames(deconPropL_combined)
+n_topics_added <- length(combined_topics)
+
+# Add celltype proportions to metadata
+for(i in 1:ncol(deconPropL_combined)) {
+  integrated_Eth_cohort_filteredL@meta.data[combined_topics[i]] <- deconPropL_combined[, i]
+}
+
+# Print names of columns added
+print(colnames(integrated_Eth_cohort_filteredL@meta.data)[69:ncol(integrated_Eth_cohort_filteredL@meta.data)])
+
+# Print number of columns added
+print(ncol(integrated_Eth_cohort_filteredL@meta.data) - 68)
+
+```
+
+```{r}
+# ============================================
+# Create dominant STdeconvolve cell type annotation
+# ============================================
+
+cat("\n=== Creating dominant STdeconvolve cell type ===\n")
+
+# Get STdeconvolve topic columns
+colnames(integrated_Eth_cohort_filteredL@meta.data)
+stdeconv_cols <- colnames(integrated_Eth_cohort_filteredL@meta.data[69:103])
+cat("STdeconvolve topics:", length(stdeconv_cols), "\n")
+print(stdeconv_cols)
+
+# Extract topic proportions
+stdeconv_matrix <- integrated_Eth_cohort_filteredL@meta.data[, stdeconv_cols]
+
+# Find the maximum value for each row and get its column name (cell type)
+dominant_celltype <- apply(stdeconv_matrix, 1, function(x) {
+  stdeconv_cols[which.max(x)]
+})
+
+# Add this as a new metadata column
+integrated_Eth_cohort_filteredL$dominant_celltype <- dominant_celltype
+Idents(integrated_Eth_cohort_filteredL) <- dominant_celltype
+
+cat("Unique dominant cell types:", length(unique(dominant_celltype)), "\n")
+cat("Cell type levels:\n")
+print(levels(Idents(integrated_Eth_cohort_filteredL)))
+
+saveRDS(integrated_Eth_cohort_filteredL, paste0(save_pathL, "Lesion_integrated_Eth_cohort_filtered_", 
+         n_topics_added, "stdeconvTopics_reclus_relabelled_COMBINED_dominantTopic_added.rds"))
+```
+```{r}
+# ==============================================================================
+# FIGURE S2A
+# ==============================================================================
+# ============================================
+# Seurat clustering and marker analysis
+# ============================================
+
+library(dplyr)
+
+# Set parameters
+res <- 1.2
+dims <- 15
+
+cat("\n=== Running dimensionality reduction ===\n")
+
+# Run PCA
+integrated_Eth_cohort_filteredL <- RunPCA(integrated_Eth_cohort_filteredL, 
+                                          assay = "integrated", 
+                                          verbose = FALSE)
+ElbowPlot(integrated_Eth_cohort_filteredL)
+
+# Clustering
+integrated_Eth_cohort_filteredL <- FindNeighbors(integrated_Eth_cohort_filteredL, 
+                                                  reduction = "pca", 
+                                                  dims = 1:dims,
+                                                  graph.name = c("NN", "SNN"))
+
+integrated_Eth_cohort_filteredL <- FindClusters(integrated_Eth_cohort_filteredL, 
+                                                verbose = FALSE, 
+                                                resolution = res, 
+                                                graph.name = "SNN")
+
+cat("Number of clusters:", length(unique(integrated_Eth_cohort_filteredL$seurat_clusters)), "\n")
+
+# Run UMAP and tSNE
+integrated_Eth_cohort_filteredL <- RunUMAP(integrated_Eth_cohort_filteredL, 
+                                           reduction = "pca", 
+                                           dims = 1:dims)
+
+DimPlot(integrated_Eth_cohort_filteredL)
+
+cat("\n=== Finding marker genes ===\n")
+
+# Find variable features and prepare for marker finding
+integrated_Eth_cohort_filteredL <- FindVariableFeatures(integrated_Eth_cohort_filteredL, 
+                                                        selection.method = "vst", 
+                                                        nfeatures = 2000)
+
+integrated_Eth_cohort_filteredL <- PrepSCTFindMarkers(integrated_Eth_cohort_filteredL, 
+                                                      assay = "SCT")
+
+all_markers <- FindAllMarkers(object = integrated_Eth_cohort_filteredL, 
+                             assay = "SCT", 
+                             only.pos = TRUE, 
+                             min.pct = 0.25, 
+                             logfc.threshold = 0.3)
+
+cat("Total marker genes found:", nrow(all_markers), "\n")
+
+# Save marker genes
+write.csv(all_markers, 
+          paste0(save_pathL, "DE_markers_res", res, "_dim_", dims, ".csv"),
+          row.names = FALSE)
+
+cat("Saved marker genes table\n")
+cat("\n=== Clustering analysis completed! ===\n")
+```
+
+
+```{r}
+# ============================================
+# Rename clusters and create visualizations
+# ============================================
+
+# Define new cluster names BASED ON MARKER GENES FOR EACH CLUSTER
+new.cluster.ids <- c("immune1", "Fib1", "Plasma1", "Myeloid", "immune2", 
+                     "immune-ker", "Endo", "Ker1", "T", "Ker2", "Ker3", 
+                     "Plasma", "Ker4", "Immune3", "Sebocytes", "Ker5", "muscle")
+
+# Rename clusters
+vec <- integrated_Eth_cohort_filteredL@meta.data[["SNN_res.1.2"]]
+levels(vec) <- new.cluster.ids
+integrated_Eth_cohort_filteredL[["UCell_clusters"]] <- vec
+Idents(integrated_Eth_cohort_filteredL) <- 'UCell_clusters'
+
+cat("Renamed clusters to:", paste(new.cluster.ids, collapse = ", "), "\n")
+
+# Define cluster colors
+ident_colours <- c(
+  "immune1" = "darkred", 
+  'Fib1' = '#D8BFD8', 
+  "Plasma1" = "#FFD700", 
+  'Myeloid' = '#DC143C',
+  "immune2" = "#00FF00",
+  "immune-ker" = "#D2B48C",
+  'Endo' = '#FFE4E1', 
+  "Ker1" = '#FB9A99',
+  'T' = '#FF8C00',
+  'Ker2' = '#AFEEEE',
+  'Ker3' = '#8FBC8F',
+  'Plasma' = 'magenta',
+  'Ker4' = '#aeadb3',
+  'Immune3' = '#6A3D9A', 
+  'Sebocytes' = '#faf4cf', 
+  'Ker5' = '#D8BFD8', 
+  'muscle' = '#E6E6FA'
+)
+
+my_cols3 <- ident_colours[order(as.character(names(ident_colours)))]
+
+# Generate dimension reduction plots
+cat("\n=== Generating dimension reduction plots ===\n")
+
+pdf(paste0(save_pathL, "S2_A_integrated_Eth_cohort_filteredL_dims_", dims, "_res", res, ".pdf"))
+
+Idents(integrated_Eth_cohort_filteredL) <- integrated_Eth_cohort_filteredL$UCell_clusters 
+
+y <- DimPlot(integrated_Eth_cohort_filteredL, reduction = "umap", 
+             label = TRUE, cols = my_cols3, label.size = 4) + NoLegend()
+
+print(y)
+
+dev.off()
+
+cat("Saved dimension reduction plots\n")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

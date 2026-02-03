@@ -1,0 +1,804 @@
+---
+title: "P3_L Analysis - Figure 6 and Supplementary Figure S5"
+output: html_document
+date: "2025-12-04"
+---
+
+# ============================================
+# SETUP AND LIBRARIES
+# ============================================
+```{r setup, include=FALSE}
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(tidyr)
+library(patchwork)
+library(EnhancedVolcano)
+library(ggrepel)
+library(pheatmap)
+library(RColorBrewer)
+library(scatterpie)
+
+# Define study parameters
+study_name <- "ethiopian4mm_cohort"
+study_path <- "F:/SD23.9.2_Dioraphte_Ethiopian_4mm_ND23.09/"
+
+# Define samples (removed patient 5 lesion and non lesional)
+samples <- c("392_1_2", "392_1_4", "393_3_2", "393_3_4", 
+             "391_4_2", "391_4_4", "392_5_2", "392_5_4",
+             "391_7_2", "391_7_4")
+
+sample_group <- rep(c("healthy", "lesion"), 5)
+disease_group <- c("MCL", "healthy", "LCL", "healthy", "MCL", 
+                   "healthy", "LCL", "healthy", "DCL", "healthy")
+
+# Define paths
+save_pathL <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_sep/lesion/iteration_nov2025/")
+
+# Manual granuloma annotation path
+granuloma_csv_path <- paste0(study_path, "V12N28-391/PK_391_4_4_run/outs/P3_GRANULOMAS.csv")
+
+# Create save directory for P3
+save_pathP3 <- paste0(save_pathL, "P3/test/")
+if(!dir.exists(save_pathP3)) {
+  dir.create(save_pathP3, recursive = TRUE)
+}
+```
+
+# ============================================
+# CUSTOM FUNCTIONS
+# ============================================
+```{r custom_functions}
+# Custom spatial visualization function with pie charts per spot
+create_custom_spatial_plot <- function(theta, pos, colors, title, topic_order, r = 50) {
+  library(ggplot2)
+  library(dplyr)
+  library(tidyr)
+  library(scatterpie)
+  
+  # Convert theta to dataframe and add position information
+  theta_df <- as.data.frame(theta)
+  theta_df$spot_id <- rownames(theta_df)
+  
+  pos_df <- as.data.frame(pos)
+  pos_df$spot_id <- rownames(pos_df)
+  
+  # Combine theta and position data
+  plot_data <- theta_df %>%
+    left_join(pos_df, by = "spot_id")
+  
+  # Get cell type columns (all columns except spot_id, x, y)
+  celltype_cols <- colnames(plot_data)[!colnames(plot_data) %in% c("spot_id", "x", "y")]
+  
+  # Order cell type columns according to topic_order
+  ordered_cols <- intersect(topic_order, celltype_cols)
+  
+  # Reorder columns in plot_data to match desired order
+  plot_data <- plot_data %>%
+    select(spot_id, x, y, all_of(ordered_cols))
+  
+  # Update celltype_cols to use ordered version
+  celltype_cols <- ordered_cols
+  
+  # Create ordered color palette matching the column order
+  ordered_colors <- colors[celltype_cols]
+  
+  # Create the plot with pie charts
+  p <- ggplot() +
+    geom_scatterpie(aes(x = x, y = y, r = r), 
+                    data = plot_data, 
+                    cols = celltype_cols,
+                    alpha = 0.8,
+                    color = NA) +
+    scale_fill_manual(values = ordered_colors, 
+                     breaks = celltype_cols,
+                     name = "Cell Types") +
+    theme_void() +
+    theme(
+      legend.position = "right",
+      legend.text = element_text(size = 8),
+      legend.title = element_text(size = 10, face = "bold"),
+      plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+      panel.background = element_rect(fill = "white", colour = "white"),
+      plot.background = element_rect(fill = "white", colour = "white")
+    ) +
+    labs(title = title) +
+    coord_fixed() +
+    guides(fill = guide_legend(override.aes = list(size = 3, alpha = 1)))
+  
+  return(p)
+}
+```
+
+# ============================================
+# LOAD DATA AND DEFINE COLORS
+# ============================================
+```{r load_data_and_setup}
+# Load lesion only integrated object
+integrated_Eth_cohort_filteredL <- readRDS(paste0(save_pathL, "Lesion_integrated_Eth_cohort_filtered_35stdeconvTopics_reclus_relabelled_COMBINED_dominantTopic_added.rds"))
+cat("Lesion-only object loaded:", ncol(integrated_Eth_cohort_filteredL), "spots\n")
+print(table(integrated_Eth_cohort_filteredL$sample_id))
+
+# Define cell types
+celltypes <- colnames(integrated_Eth_cohort_filteredL@meta.data)[69:103]
+
+# Define immune topics
+immune_topics <- c(
+  "IgM_Plasma", "IgA_Plasma", "Neuts", "memB", "Plasmablasts", 
+  "EarlyPlasma_APC", "Teff", "Tcyto", "Th1_DC", "Tcm_DC", "Th1",
+  "Cytomono", "M1_mac", "APC_M1", "APC_M2Mac", "Act_M2Mac", 
+  "Tissue_Repair_M2Mac", "Lipid_macs", "organised_immune"
+)
+
+# Define cell type colors
+celltype_colors <- c(
+  # PLASMA/B CELLS
+  "IgM_Plasma" = "#00CED1", "IgA_Plasma" = "#00FFFF",
+  "Plasmablasts" = "#4682B4", "memB" = "#2F4F4F",
+  "EarlyPlasma_APC" = "#1E90FF",
+  
+  # T CELLS
+  "Teff" = "#9400D3", "Th1_DC" = "#EE82EE",
+  "Tcm_DC" = "#FF1493", "Th1" = "#C71585", "Tcyto" = "#7B68EE",
+  
+  # MACROPHAGES
+  "Cytomono" = "#00008B", "M1_mac" = "darkred", "APC_M1" = "#FFD700",
+  "APC_M2Mac" = "#D2691E", "Act_M2Mac" = "#CD853F",
+  "Tissue_Repair_M2Mac" = "#DEB887", "Lipid_macs" = "#FF6347",
+  
+  # NEUTROPHILS
+  "Neuts" = "#00FF7F",
+  
+  # IMMUNE COMPLEX
+  "organised_immune" = "#ADFF2F",
+  
+  # KERATINOCYTES
+  "BasalKer" = "#FDBF6F", "inf_BasalKer" = "#F0FFF0",
+  "SuprabasalKer" = "#CAB2D6", "inf_SupraBasal" = "#808000",
+  "TopKer" = "#A6CEE3", "inf_TopKer" = "#87CEEB",
+  "LC_Basal" = "#FB9A99",
+  
+  # STROMAL
+  "Sebaceous" = "#FFC0CB", "Eccrine" = "#B2DF8A",
+  "muscle" = "#E6E6FA", "Schwann" = "#FFA07A", "Endo" = "#FFF0F5",
+  
+  # FIBROBLASTS
+  "Fib1" = "#FFE4B5", "Fib2" = "#FFFACD", "fib3" = "#D3D3D3",
+  
+  # MIXED/OTHER
+  "RBC_mac_Tc" = "#808080"
+)
+
+# Define patient colors (consistent with Figures 4 and 5)
+patient_colors <- c(
+  "P1_L" = "#F8766D", 
+  "P2_L" = "#A3A500", 
+  "P3_L" = "#00BF7D", 
+  "P4_L" = "#00B0F6", 
+  "P6_L" = "#E76BF3"
+)
+
+# Set up comparison
+integrated_Eth_cohort_filteredL$comparison_P3 <- ifelse(
+  integrated_Eth_cohort_filteredL$sample_id == "P3_L", 
+  "P3_L", 
+  "Others"
+)
+
+Idents(integrated_Eth_cohort_filteredL) <- "comparison_P3"
+
+cat("\n=== Patient Grouping ===\n")
+print(table(integrated_Eth_cohort_filteredL$comparison_P3))
+```
+
+# ============================================
+# IMPORT AND ANNOTATE MANUAL GRANULOMAS
+# ============================================
+```{r import_granuloma_annotations}
+cat("\n=== IMPORTING MANUAL GRANULOMA ANNOTATIONS ===\n")
+
+# Load manual granuloma annotations
+manual_granulomas <- read.csv(granuloma_csv_path)
+
+# Check structure
+cat("\nCSV Structure:\n")
+head(manual_granulomas)
+cat("\nColumns:", paste(colnames(manual_granulomas), collapse = ", "), "\n")
+
+cat("\n=== CSV Summary ===\n")
+cat("Total granuloma spots:", nrow(manual_granulomas), "\n")
+cat("Granuloma regions identified:", length(unique(manual_granulomas$granuloma)), "\n")
+print(table(manual_granulomas$granuloma))
+
+# Subset P3_L
+p3_subset <- subset(integrated_Eth_cohort_filteredL, subset = sample_id == "P3_L")
+
+# Initialize all spots as Non-granuloma
+p3_subset$manual_region <- "Non-granuloma"
+p3_subset$granuloma_id <- NA
+
+# Get spot IDs
+p3_spot_ids <- rownames(p3_subset@meta.data)
+
+# Check barcode format
+cat("\n=== Checking Barcode Formats ===\n")
+cat("Example P3_subset barcode:", head(p3_spot_ids, 1), "\n")
+cat("Example CSV barcode:", head(manual_granulomas$Barcode, 1), "\n")
+
+# Add suffix if needed
+if (grepl("_\\d+$", p3_spot_ids[1]) && !grepl("_\\d+$", manual_granulomas$Barcode[1])) {
+  suffix_match <- regmatches(p3_spot_ids[1], regexpr("_\\d+$", p3_spot_ids[1]))
+  cat("Adding suffix", suffix_match, "to CSV barcodes\n")
+  manual_granulomas$Barcode_full <- paste0(manual_granulomas$Barcode, suffix_match)
+} else {
+  manual_granulomas$Barcode_full <- manual_granulomas$Barcode
+}
+
+# Match granuloma annotations
+matched_count <- 0
+for (i in 1:nrow(manual_granulomas)) {
+  barcode <- manual_granulomas$Barcode_full[i]
+  gran_id <- manual_granulomas$granuloma[i]
+  
+  if (barcode %in% p3_spot_ids) {
+    p3_subset$manual_region[rownames(p3_subset@meta.data) == barcode] <- "Granuloma"
+    p3_subset$granuloma_id[rownames(p3_subset@meta.data) == barcode] <- gran_id
+    matched_count <- matched_count + 1
+  }
+}
+
+cat("\n=== Manual Granuloma Annotation Summary ===\n")
+cat("Total spots in P3_L:", ncol(p3_subset), "\n")
+cat("Granuloma spots matched:", matched_count, "\n")
+cat("Non-granuloma spots:", sum(p3_subset$manual_region == "Non-granuloma"), "\n")
+
+cat("\nGranuloma regions:\n")
+print(table(p3_subset$granuloma_id, useNA = "ifany"))
+
+# Verify annotation worked
+if (matched_count == 0) {
+  stop("ERROR: No barcodes matched! Check barcode format.")
+}
+
+# Convert granuloma_id to factor for plotting
+p3_subset$granuloma_id_factor <- factor(
+  p3_subset$granuloma_id, 
+  levels = sort(unique(na.omit(p3_subset$granuloma_id)))
+)
+
+cat("Granuloma annotation complete\n")
+```
+
+# ============================================
+# FIGURE 6C: Spatial Plot Manual Granulomas
+# ============================================
+```{r figure_6C}
+cat("\n=== FIGURE 6C: Manual Granuloma Annotations ===\n")
+
+# Binary classification spatial plot (Granuloma vs Non-granuloma)
+p_manual_binary <- SpatialDimPlot(
+  p3_subset,
+  group.by = "manual_region",
+  pt.size.factor = 2, 
+  crop = FALSE, 
+  cols = c("Granuloma" = "#E64B35", "Non-granuloma" = "#E8E8E8"),
+  alpha = c(0.9, 0.3),
+  stroke = 0.5
+) +
+  labs(title = "P3_L: Manually Annotated Granulomas") +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(size = 14, face = "bold")
+  )
+
+ggsave(paste0(save_pathP3, "6_C_manual_granulomas_binary.pdf"),
+       p_manual_binary, width = 10, height = 8)
+
+cat("Figure 6C complete: Manual granuloma spatial plot saved\n")
+```
+
+# ============================================
+# FIGURE 6D: Scatter Pie Plot Cell Type Composition
+# ============================================
+```{r figure_6D}
+cat("\n=== FIGURE 6D: Cell Type Composition Scatter Pie Plot ===\n")
+
+# Get spatial coordinates
+pos <- GetTissueCoordinates(p3_subset)
+pos <- pos %>%
+  select(-cell) %>%
+  select(y, x)
+
+# Define topic columns
+topic_columns <- colnames(p3_subset@meta.data)[69:103]
+
+# Extract theta matrix (proportions)
+P3_theta <- as.matrix(p3_subset@meta.data[, topic_columns])
+rownames(P3_theta) <- colnames(p3_subset)
+
+# Define topic order for legend
+topic_order <- topic_columns
+
+# Create the scatter pie plot
+p <- create_custom_spatial_plot(
+  theta = P3_theta,
+  pos = pos,
+  colors = celltype_colors,
+  title = "Cell Type Composition - P3_L",  # FIXED: was P2_L
+  topic_order = topic_order,
+  r = 110
+)
+
+ggsave(paste0(save_pathP3, "6_D_P3_L_scatterpie.pdf"), p, width = 12, height = 10)
+
+cat("Figure 6D complete: Scatter pie plot saved\n")
+```
+
+# ============================================
+# FIGURE 6E: Spatial Feature Plots Granuloma Genes
+# ============================================
+```{r figure_6E}
+cat("\n=== FIGURE 6E: Spatial Distribution of Granuloma Genes ===\n")
+
+# Define granuloma marker genes
+granuloma_genes <- c(
+  "CHI3L1", "LIPA", "APOE", "GZMB", "GNLY", "FABP5",
+  "MPEG1", "SOD2", "HLA-DQA1", "CCL5", "CXCL9", "LTB"
+)
+
+# Create spatial feature plots
+Spatial_p <- SpatialFeaturePlot(
+  p3_subset, 
+  features = granuloma_genes, 
+  keep.scale = "all", 
+  crop = FALSE, 
+  ncol = 4
+)
+
+ggsave(paste0(save_pathP3, "6_E_spatialfeatureplots_granuloma_genes.pdf"), 
+       Spatial_p, width = 14, height = 10)
+
+cat("Figure 6E complete: Spatial feature plots saved\n")
+```
+
+# ============================================
+# FIGURE 6F: Granuloma Marker Expression Violin Plots
+# ============================================
+```{r figure_6F}
+cat("\n=== FIGURE 6F: Granuloma Marker Expression ===\n")
+
+# Get expression data for granuloma markers
+granuloma_exp <- p3_subset@meta.data %>%
+  select(manual_region)
+
+for (gene in granuloma_genes) {
+  if (gene %in% rownames(p3_subset)) {
+    granuloma_exp[[gene]] <- GetAssayData(p3_subset, slot = "data")[gene, ]
+  }
+}
+
+# Reshape for plotting
+granuloma_exp_long <- granuloma_exp %>%
+  pivot_longer(cols = -manual_region, names_to = "Gene", values_to = "Expression")
+
+# Violin plots with statistics
+p_granuloma_markers <- ggplot(
+  granuloma_exp_long, 
+  aes(x = manual_region, y = Expression, fill = manual_region)
+) +
+  geom_violin(width = 0.8, alpha = 0.7) +
+  geom_boxplot(width = 0.1, outlier.shape = 16, outlier.size = 0.5, alpha = 0.9) +
+  facet_wrap(~Gene, scales = "free_y", ncol = 4) +
+  scale_fill_manual(values = c(
+    "Granuloma" = "#E64B35", 
+    "Non-granuloma" = "gray70"
+  )) +
+  stat_compare_means(
+    method = "wilcox.test", 
+    label = "p.signif",
+    label.y.npc = 0.95
+  ) +
+  labs(
+    title = "Granuloma Marker Expression",
+    x = "Region", 
+    y = "Expression Level"
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "top",
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    strip.text = element_text(size = 9, face = "bold")
+  )
+
+ggsave(paste0(save_pathP3, "6_F_granuloma_markers.pdf"), 
+       p_granuloma_markers, width = 14, height = 10)
+
+# Calculate statistical summary
+granuloma_marker_stats <- granuloma_exp_long %>%
+  group_by(Gene) %>%
+  summarise(
+    Mean_Granuloma = mean(Expression[manual_region == "Granuloma"], na.rm = TRUE),
+    Mean_NonGranuloma = mean(Expression[manual_region == "Non-granuloma"], na.rm = TRUE),
+    FoldChange = Mean_Granuloma / (Mean_NonGranuloma + 0.001),
+    pvalue = wilcox.test(
+      Expression[manual_region == "Granuloma"],
+      Expression[manual_region == "Non-granuloma"]
+    )$p.value
+  ) %>%
+  mutate(padj = p.adjust(pvalue, method = "BH")) %>%
+  arrange(desc(FoldChange))
+
+cat("\n=== Granuloma Marker Statistics ===\n")
+print(granuloma_marker_stats)
+
+write.csv(granuloma_marker_stats,
+          paste0(save_pathP3, "granuloma_marker_stats.csv"),
+          row.names = FALSE)
+
+cat("Figure 6F complete: Violin plots and statistics saved\n")
+```
+
+# ============================================
+# FIGURE 6G: Cell Type Enrichment in Granulomas
+# ============================================
+```{r figure_6G}
+cat("\n=== FIGURE 6G: Cell Type Enrichment Analysis ===\n")
+
+# Get available cell types
+Idents(integrated_Eth_cohort_filteredL) <- "dominant_celltype"
+cell_types <- levels(Idents(integrated_Eth_cohort_filteredL))
+
+# Statistical comparison of cell types
+available_cell_types <- cell_types[cell_types %in% colnames(p3_subset@meta.data)]
+celltype_stats <- list()
+
+for (ct in available_cell_types) {
+  granuloma_data <- p3_subset@meta.data %>%
+    select(manual_region, !!sym(ct))
+  
+  # Only test if both groups have sufficient data
+  if (sum(granuloma_data$manual_region == "Granuloma") > 5 && 
+      sum(granuloma_data$manual_region == "Non-granuloma") > 5) {
+    
+    test_result <- wilcox.test(
+      granuloma_data[[ct]][granuloma_data$manual_region == "Granuloma"],
+      granuloma_data[[ct]][granuloma_data$manual_region == "Non-granuloma"]
+    )
+    
+    mean_granuloma <- mean(
+      granuloma_data[[ct]][granuloma_data$manual_region == "Granuloma"], 
+      na.rm = TRUE
+    )
+    mean_non <- mean(
+      granuloma_data[[ct]][granuloma_data$manual_region == "Non-granuloma"], 
+      na.rm = TRUE
+    )
+    
+    celltype_stats[[ct]] <- data.frame(
+      CellType = ct,
+      Mean_Granuloma = mean_granuloma,
+      Mean_NonGranuloma = mean_non,
+      FoldChange = mean_granuloma / (mean_non + 0.001),
+      pvalue = test_result$p.value
+    )
+  }
+}
+
+# Combine results
+celltype_comparison <- do.call(rbind, celltype_stats)
+celltype_comparison$padj <- p.adjust(celltype_comparison$pvalue, method = "BH")
+celltype_comparison <- celltype_comparison %>%
+  arrange(desc(FoldChange))
+
+cat("\n=== Cell Types Enriched in Granulomas ===\n")
+print(celltype_comparison)
+
+# Save results
+write.csv(celltype_comparison,
+          paste0(save_pathP3, "celltype_enrichment_granuloma_stats.csv"),
+          row.names = FALSE)
+
+# Enrichment plot
+p_enrichment <- ggplot(
+  celltype_comparison, 
+  aes(x = reorder(CellType, FoldChange), 
+      y = FoldChange,
+      fill = padj < 0.05)
+) +
+  geom_bar(stat = "identity", color = "black") +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
+  scale_fill_manual(
+    values = c("TRUE" = "#E64B35", "FALSE" = "gray70"),
+    name = "Significant\n(padj < 0.05)"
+  ) +
+  coord_flip() +
+  labs(
+    title = "Cell Type Enrichment in Granulomas (P3_L)",
+    subtitle = "Fold Change: Granuloma / Non-Granuloma",
+    x = "Cell Type",
+    y = "Fold Change"
+  ) +
+  theme_classic() +
+  theme(legend.position = "right")
+
+ggsave(paste0(save_pathP3, "6_G_celltype_enrichment_granuloma.pdf"),
+       p_enrichment, width = 6, height = 8)
+
+cat("Figure 6G complete: Cell type enrichment plot saved\n")
+```
+
+# ============================================
+# SUPPLEMENTARY FIGURE S5A: Volcano Plot P3_L vs Others
+# ============================================
+```{r figure_S5A}
+cat("\n=== SUPPLEMENTARY FIGURE S5A: Volcano Plot MHC-II Genes ===\n")
+
+# Find markers for P3_L vs Others
+p3_markers <- FindMarkers(
+  integrated_Eth_cohort_filteredL,group.by = "comparison_P3",
+  ident.1 = "P3_L",
+  ident.2 = "Others",
+  min.pct = 0.25,
+  logfc.threshold = 0.5,
+  test.use = "wilcox"
+)
+
+# Add gene names
+p3_markers$gene <- rownames(p3_markers)
+
+# Order by avg_log2FC
+p3_markers <- p3_markers %>%
+  arrange(desc(avg_log2FC))
+
+# View top upregulated genes
+cat("\n=== TOP 20 UPREGULATED GENES IN P3_L ===\n")
+top_20_p3 <- p3_markers %>%
+  filter(p_val_adj < 0.05, avg_log2FC > 0) %>%
+  head(20)
+print(top_20_p3[, c("gene", "avg_log2FC", "pct.1", "pct.2", "p_val_adj")])
+
+# Save results
+write.csv(p3_markers, 
+          paste0(save_pathP3, "P3_vs_others_DEGs.csv"),
+          row.names = TRUE)
+
+# Summary
+sig_genes_p3 <- p3_markers %>%
+  filter(p_val_adj < 0.05, avg_log2FC > 0)
+cat("\nSignificant upregulated genes in P3_L:", nrow(sig_genes_p3), "\n")
+
+# Fix zero p-values for volcano plot
+p3_markers$p_val <- ifelse(p3_markers$p_val == 0, 1e-300, p3_markers$p_val)
+p3_markers$p_val_adj <- ifelse(p3_markers$p_val_adj == 0, 1e-300, p3_markers$p_val_adj)
+
+# Prepare volcano plot data
+volcano_data <- p3_markers
+volcano_data$gene <- rownames(volcano_data)
+volcano_data$neg_log10_p <- -log10(volcano_data$p_val_adj)
+
+# Define gene categories
+mhc_genes <- c("HLA-DRB1", "HLA-DRB5", "HLA-DQA1", "HLA-DQB1")
+ig_genes <- grep("^IGH|^IGK|^IGL", volcano_data$gene, value = TRUE)
+
+# Label specific genes
+volcano_data$gene_label <- ifelse(
+  volcano_data$gene %in% c(mhc_genes, ig_genes),
+  volcano_data$gene, 
+  ""
+)
+
+# Create color categories
+volcano_data$gene_type <- case_when(
+  volcano_data$gene %in% mhc_genes ~ "MHC-II",
+  volcano_data$gene %in% ig_genes ~ "Immunoglobulin",
+  TRUE ~ "Other"
+)
+
+# Volcano plot
+p_volcano <- ggplot(volcano_data, aes(x = avg_log2FC, y = neg_log10_p)) +
+  ylim(0, 300) +
+  geom_point(aes(color = gene_type), alpha = 0.6, size = 2) +
+  geom_point(
+    data = subset(volcano_data, gene_type == "MHC-II"),
+    aes(color = gene_type), 
+    size = 4
+  ) +
+  scale_color_manual(
+    values = c(
+      "MHC-II" = "#E64B35", 
+      "Immunoglobulin" = "#4DBBD5", 
+      "Other" = "gray70"
+    ),
+    name = "Gene Category"
+  ) +
+  geom_text_repel(
+    aes(label = gene_label), 
+    size = 4, 
+    box.padding = 0.5,
+    max.overlaps = Inf,
+    color = "#E64B35",
+    fontface = "bold"
+  ) +
+  geom_vline(xintercept = c(-0.5, 0.5), linetype = "dashed", color = "gray40") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "gray40") +
+  labs(
+    title = "P3_L vs Others: MHC Class II Upregulation",
+    x = "Log2 Fold Change",
+    y = "-Log10(Adjusted P-value)"
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(size = 14, face = "bold")
+  )
+
+ggsave(paste0(save_pathP3, "S5_A_volcano_MHC-II.pdf"), 
+       p_volcano, width = 10, height = 8)
+
+cat("Supplementary Figure S5A complete: Volcano plot saved\n")
+```
+
+# ============================================
+# SUPPLEMENTARY FIGURE S5B-C: Immunoglobulin/Plasma Genes
+# ============================================
+```{r figure_S5B_C}
+cat("\n=== SUPPLEMENTARY FIGURE S5B-C: Immunoglobulin and Plasma Genes ===\n")
+
+# Define immunoglobulin and plasma marker genes
+ig_plasma <- c("IGHG2", "IGHG1", "IGHG3", "IGHG4", "IGHA1", "IGHM", "CD79A", "XBP1")
+
+# Create spatial feature plots
+Spatial_ig <- SpatialFeaturePlot(
+  p3_subset, 
+  features = ig_plasma, 
+  keep.scale = "all", 
+  crop = FALSE, 
+  ncol = 4
+)
+
+ggsave(paste0(save_pathP3, "S5_B_C_spatialfeatureplots_IG_genes.pdf"), 
+       Spatial_ig, width = 14, height = 10)
+
+cat("Supplementary Figure S5B-C complete: IG/plasma gene spatial plots saved\n")
+```
+
+# ============================================
+# ADDITIONAL: Granuloma vs Non-Granuloma Volcano Plot
+# ============================================
+```{r additional_granuloma_volcano}
+cat("\n=== ADDITIONAL: Differential Expression Granuloma vs Non-Granuloma ===\n")
+
+# Set identity to manual_region
+Idents(p3_subset) <- "manual_region"
+
+# Find markers
+gran_markers <- FindMarkers(
+  object = p3_subset, 
+  ident.1 = "Granuloma", 
+  ident.2 = "Non-granuloma",
+  min.diff.pct = 0.10,
+  logfc.threshold = 0.25
+)
+
+# Add gene names
+gran_markers$gene <- rownames(gran_markers)
+
+# Fix zero p-values
+gran_markers$p_val <- ifelse(gran_markers$p_val == 0, 1e-300, gran_markers$p_val)
+gran_markers$p_val_adj <- ifelse(gran_markers$p_val_adj == 0, 1e-300, gran_markers$p_val_adj)
+
+# Order by log2FC
+gran_markers <- gran_markers %>%
+  arrange(desc(avg_log2FC))
+
+# Save results
+write.csv(gran_markers, 
+          paste0(save_pathP3, "Granuloma_vs_NonGranuloma_DEGs.csv"),
+          row.names = FALSE)
+
+# Prepare volcano data
+volcano_data <- gran_markers
+all_genes <- rownames(gran_markers)
+volcano_data$neg_log10_p <- -log10(volcano_data$p_val_adj)
+
+# Define gene categories
+mhc_genes <- c("HLA-DRA", "HLA-DQA1", "HLA-DQB1", "HLA-DPA1", "HLA-DPB1", "CD74")
+macrophage_genes <- c("CD68", "CD163", "MRC1", "MSR1", "MARCO", "CD14", "FCGR1A")
+granuloma_genes <- c("CHI3L1", "LIPA", "APOE", "SPP1", "LGALS3", "FABP5", "GPNMB")
+
+# Define cytokine genes
+cytokine_genes <- unique(c(
+  grep("^IL[0-9]+[A-Z]*[0-9]*$", all_genes, value = TRUE),
+  grep("^IL[0-9]+R[A-Z]*[0-9]*$", all_genes, value = TRUE),
+  grep("^CCL[0-9]+$", all_genes, value = TRUE),
+  grep("^CCR[0-9]+$", all_genes, value = TRUE),
+  grep("^CXCL[0-9]+$", all_genes, value = TRUE),
+  grep("^CXCR[0-9]+$", all_genes, value = TRUE),
+  grep("^CX3CL[0-9]+$", all_genes, value = TRUE),
+  grep("^CX3CR[0-9]+$", all_genes, value = TRUE),
+  grep("^TNF$", all_genes, value = TRUE),
+  grep("^TNFSF[0-9]+[A-Z]*$", all_genes, value = TRUE),
+  grep("^TNFRSF[0-9]+[A-Z]*$", all_genes, value = TRUE),
+  grep("^TNFAIP[0-9]+$", all_genes, value = TRUE),
+  grep("^LTA$|^LTB$", all_genes, value = TRUE),
+  grep("^TGFB[0-9]+$", all_genes, value = TRUE),
+  grep("^TGFBR[0-9]+$", all_genes, value = TRUE),
+  grep("^IFN[A-Z]+[0-9]*$", all_genes, value = TRUE),
+  grep("^IFNG$|^IFNA.*|^IFNB.*", all_genes, value = TRUE),
+  grep("^IFNGR[0-9]+$", all_genes, value = TRUE),
+  grep("^CSF[0-9]+$|^CSF[0-9]+R[A-Z]*$", all_genes, value = TRUE)
+))
+
+# Label top genes and specific categories
+top_genes <- gran_markers %>%
+  filter(p_val_adj < 0.05) %>%
+  arrange(desc(abs(avg_log2FC))) %>%
+  head(100) %>%
+  pull(gene)
+
+genes_to_label <- unique(c(
+  top_genes,
+  intersect(mhc_genes, gran_markers$gene),
+  intersect(macrophage_genes, gran_markers$gene),
+  intersect(granuloma_genes, gran_markers$gene),
+  intersect(cytokine_genes, gran_markers$gene)
+))
+
+volcano_data$gene_label <- ifelse(
+  volcano_data$gene %in% genes_to_label,
+  volcano_data$gene, 
+  ""
+)
+
+# Assign gene categories
+volcano_data$gene_type <- case_when(
+  volcano_data$gene %in% mhc_genes ~ "MHC-II",
+  volcano_data$gene %in% macrophage_genes ~ "Macrophage",
+  volcano_data$gene %in% granuloma_genes ~ "Granuloma",
+  volcano_data$gene %in% cytokine_genes ~ "Cytokine",
+  volcano_data$p_val_adj < 0.05 & abs(volcano_data$avg_log2FC) > 0.5 ~ "Significant",
+  TRUE ~ "NS"
+)
+
+# Volcano plot
+p_volcano_gran <- ggplot(volcano_data, aes(x = avg_log2FC, y = neg_log10_p)) +
+  geom_point(aes(color = gene_type), alpha = 0.6, size = 2) +
+  scale_color_manual(
+    values = c(
+      "MHC-II" = "#E64B35",
+      "Macrophage" = "#4DBBD5",
+      "Granuloma" = "#00A087",
+      "Cytokine" = "#F39B7F",
+      "Significant" = "#8491B4",
+      "NS" = "gray70"
+    ),
+    name = "Gene Category"
+  ) +
+  xlim(-2, 4) +
+  geom_text_repel(
+    aes(label = gene_label),
+    size = 3,
+    box.padding = 0.5,
+    max.overlaps = 20,
+    segment.color = "gray50"
+  ) +
+  geom_vline(xintercept = c(-0.25, 0.25), linetype = "dashed", color = "gray40") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "gray40") +
+  labs(
+    title = "Granuloma vs Non-Granuloma Regions (P3_L)",
+    x = "Log2 Fold Change",
+    y = "-Log10(Adjusted P-value)"
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(size = 14, face = "bold")
+  )
+
+ggsave(paste0(save_pathP3, "Figure6_Granuloma_volcano.pdf"),
+       p_volcano_gran, width = 6, height = 6)
+
+cat("Additional granuloma volcano plot saved\n")
+```
+

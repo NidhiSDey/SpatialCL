@@ -1,0 +1,552 @@
+```{r}
+# ==============================================================================
+# Paper Figure Generation - Ethiopian 4mm Cohort
+# ==============================================================================
+# This script generates all figures for the manuscript using the final
+# annotated Seurat object with clinical metadata
+# and uses "Eth4mm_renamed_res_addedabundances_pid_sampleid_tratio0.6dims1_15_cohort.rds" for this 
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Load Required Libraries
+# ------------------------------------------------------------------------------
+
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+library(patchwork)
+library(RColorBrewer)
+
+# ------------------------------------------------------------------------------
+# Set Parameters and Paths
+# ------------------------------------------------------------------------------
+
+# Study name and paths
+study_name <- "ethiopian4mm_cohort"
+study_path <- "F:/SD23.9.2_Dioraphte_Ethiopian_4mm_ND23.09/"
+save_path <- paste0(study_path, "R/No_P5/test/")
+
+# Clustering parameters used in analysis
+res <- 0.6
+dims <- 15
+```
+
+
+```{r}
+# ------------------------------------------------------------------------------
+# Load Final Annotated Seurat Object
+# ------------------------------------------------------------------------------
+
+integrated_Eth_cohort <- readRDS(
+  paste0(save_path, "Eth4mm_renamed_res_addedabundances_pid_sampleid_tratio0.6dims1_15_cohort.rds")
+)
+
+# ------------x------------------------------------------------------------------
+# Define Color Palettes
+# ------------------------------------------------------------------------------
+
+# Main cell type color palette
+ident_colours <- c(
+  "Fib1"          = "#FFFEE0",  # Fibroblasts - light yellow
+  "T_mye1"        = "#FF7276",  # T/Myeloid mix 1 - coral red
+  "Ker1"          = "#8FBC8F",  # Keratinocytes 1 - sea green
+  "T_B"           = "#61a8ff",  # T/B cells - sky blue
+  "Ker2"          = "#C6EAEE",  # Keratinocytes 2 - pale cyan
+  "Ig_rich"       = "#b497e7",  # Ig-rich (plasma) - lavender
+  "Mye1"          = "#00FF00",  # Myeloid - green
+  "smooth_muscle" = "#E7D27C",  # Smooth muscle - tan
+  "Endo"          = "#FDCDAC",  # Endothelial - peach
+  "Ker3"          = "#DFCFF3",  # Keratinocytes 3 - pale purple
+  "Ker4"          = "#E6E6FA",  # Keratinocytes 4 - lavender
+  "T_mye2"        = "#ef4782"   # T/Myeloid mix 2 - pink
+)
+
+# Sort colors alphabetically for consistency
+my_cols1 <- ident_colours[order(as.character(names(ident_colours)))]
+
+# Subcluster color palette (for T_B and Ig_rich subclusters)
+ident_colours1 <- c(
+  "Ker6"   = "#F68282",      
+  "Mye2"     = "#25aff5",  
+  "B"      = "#D4D915",   
+  "T"      = "#B95FBB",  
+  "Plasma" = "#1FA195"   
+)
+
+my_cols4 <- ident_colours1[order(as.character(names(ident_colours1)))]
+
+# Subcluster numeric IDs color palette
+spot_colours1 <- c(
+  '0' = '#F68282',  # Cluster 0
+  '1' = '#25aff5',  # Cluster 1
+  '2' = '#1FA195',  # Cluster 2
+  '3' = '#B95FBB',  # Cluster 3
+  '4' = '#D4D915'   # Cluster 4
+)
+
+my_cols3 <- spot_colours1[order(as.integer(names(spot_colours1)))]
+```
+
+
+```{r}
+# ==============================================================================
+# FIGURE 2A - UMAP of All Cell Types
+# ==============================================================================
+
+pdf(paste0(save_path, "Figure2a_Dimplot_integrated_eth_cohort_umap_seuratclusters.pdf"))
+  
+  umap_all <- DimPlot(
+    object = integrated_Eth_cohort, 
+    reduction = "umap", 
+    group.by = "morpho",  # Cell type annotations
+    cols = my_cols1
+  )
+  
+  print(umap_all)
+  
+dev.off()
+
+# Display in console
+print(umap_all)
+
+
+# ==============================================================================
+# FIGURE S1A - QC Metrics Summary
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Extract and Prepare Metadata
+# ------------------------------------------------------------------------------
+
+# Extract metadata to dataframe
+metadata <- integrated_Eth_cohort@meta.data
+
+# Create log-transformed metrics for visualization
+metadata$log10_UMIs <- log10(metadata$nCount_Spatial)
+metadata$log10_Genes <- log10(metadata$nFeature_Spatial)
+
+# ------------------------------------------------------------------------------
+# Define Custom Theme
+# ------------------------------------------------------------------------------
+
+custom_theme <- theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, hjust = 0.5),
+    axis.title = element_text(size = 10),
+    axis.text = element_text(size = 8),
+    legend.position = "right",
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+# ------------------------------------------------------------------------------
+# Generate QC Plots
+# ------------------------------------------------------------------------------
+
+# Plot 1: UMIs per spot across samples
+p1 <- ggplot(metadata, aes(x = sample_id, y = log10_UMIs, fill = group)) +
+  geom_boxplot(outlier.size = 0.5) +
+  ggtitle("UMIs per spot across samples") +
+  xlab("Sample") +
+  ylab("Number of UMIs (log10)") +
+  custom_theme
+
+# Plot 2: Genes per spot across samples
+p2 <- ggplot(metadata, aes(x = sample_id, y = log10_Genes, fill = group)) +
+  geom_boxplot(outlier.size = 0.5) +
+  ggtitle("Genes per spot across samples") +
+  xlab("Sample") +
+  ylab("Number of Genes (log10)") +
+  custom_theme
+
+# Plot 3: UMI vs Genes scatter plot
+p3 <- ggplot(metadata, aes(x = log10_UMIs, y = log10_Genes, color = sample_id)) +
+  geom_point(size = 0.5, alpha = 0.5) +
+  ggtitle("UMIs vs Genes per spot") +
+  xlab("Number of UMIs (log10)") +
+  ylab("Number of Genes (log10)") +
+  custom_theme
+
+# ------------------------------------------------------------------------------
+# Calculate Summary Statistics
+# ------------------------------------------------------------------------------
+
+qc_summary <- metadata %>%
+  group_by(sample_id, group) %>%
+  summarise(
+    Mean_UMIs = mean(nCount_Spatial),
+    Median_UMIs = median(nCount_Spatial),
+    SD_UMIs = sd(nCount_Spatial),
+    Mean_Genes = mean(nFeature_Spatial),
+    Median_Genes = median(nFeature_Spatial),
+    SD_Genes = sd(nFeature_Spatial),
+    Total_Spots = n(),
+    .groups = 'drop'
+  )
+
+# Print summary statistics
+print("QC Summary Statistics:")
+print(qc_summary)
+
+# Save summary table
+write.csv(
+  qc_summary, 
+  paste0(save_path, "spatial_qc_metrics_by_sample_id.csv"),
+  row.names = FALSE
+)
+
+# ------------------------------------------------------------------------------
+# Combine and Save QC Plots
+# ------------------------------------------------------------------------------
+
+# Combine plots vertically
+combined_qc <- (p1 / p2 / p3) +
+  plot_layout(heights = c(1, 1, 1.5))
+
+# Save combined QC figure
+ggsave(
+  paste0(save_path, "FigureS1A_spatial_qc_metrics_by_sample_id.pdf"), 
+  combined_qc, 
+  width = 12, 
+  height = 15
+)
+```
+
+
+```{r}
+# ==============================================================================
+# SUBCLUSTERING: T_B and Ig_rich Populations
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Subset T_B and Ig_rich Clusters
+# ------------------------------------------------------------------------------
+
+# Set identity to cell type annotations
+Idents(integrated_Eth_cohort) <- "morpho"
+
+# Extract T_B and Ig_rich populations for sub-analysis
+sub1 <- subset(
+  x = integrated_Eth_cohort, 
+  idents = c("T_B", "Ig_rich")
+)
+
+# Set parameters for subclustering
+res <- 0.3
+dims <- 15
+
+# ------------------------------------------------------------------------------
+# Re-cluster Subset
+# ------------------------------------------------------------------------------
+
+# Run PCA on subset
+sub1 <- RunPCA(sub1, assay = "integrated", verbose = FALSE)
+
+# Visualize PC variance
+ElbowPlot(sub1)
+
+# Find neighbors and cluster
+sub1 <- FindNeighbors(sub1, reduction = "pca", dims = 1:dims)
+DefaultAssay(sub1) <- "integrated"
+sub1 <- FindClusters(sub1, verbose = FALSE)
+print(table(sub1$seurat_clusters))
+sub1$sub1_clusters <- sub1$seurat_clusters
+
+# Run UMAP and t-SNE
+sub1 <- RunUMAP(sub1, reduction = "pca", dims = 1:dims)
+sub1 <- RunTSNE(sub1, reduction = "pca", dims = 1:dims)
+
+# ------------------------------------------------------------------------------
+# Find Subcluster Markers
+# ------------------------------------------------------------------------------
+
+# Switch to SCT assay for marker finding
+DefaultAssay(sub1) <- "SCT"
+sub1 <- PrepSCTFindMarkers(sub1)
+
+# Find marker genes for each subcluster
+sub1_markers <- FindAllMarkers(
+  sub1, 
+  only.pos = TRUE, 
+  min.pct = 0.25, 
+  logfc.threshold = 0.25, 
+  assay = "SCT", 
+  recorrect_umi = FALSE
+)
+
+# Save subcluster markers
+write.csv(
+  sub1_markers, 
+  paste0(save_path, "sub1_markers_dims", dims, "_res", res, ".csv"), 
+  row.names = TRUE
+)
+
+# ------------------------------------------------------------------------------
+# Rename Subclusters Based on Marker Expression
+# ------------------------------------------------------------------------------
+
+# Create morpho_subcluster column by mapping cluster numbers to names
+sub1$morpho_subcluster <- NA  # Initialize
+
+# Map each cluster number to its biological identity
+sub1$morpho_subcluster[sub1$sub1_clusters == "0"] <- "Ker6"
+sub1$morpho_subcluster[sub1$sub1_clusters == "1"] <- "Mye2"
+sub1$morpho_subcluster[sub1$sub1_clusters == "2"] <- "B"
+sub1$morpho_subcluster[sub1$sub1_clusters == "3"] <- "T"
+sub1$morpho_subcluster[sub1$sub1_clusters == "4"] <- "Plasma"
+
+# Convert to factor with correct order
+sub1$morpho_subcluster <- factor(
+  sub1$morpho_subcluster, 
+  levels = c("Ker6", "Mye2", "B", "T", "Plasma")
+)
+
+table(sub1$morpho_subcluster)
+
+Idents(sub1) <- sub1$morpho_subcluster
+
+# ==============================================================================
+# FIGURE S1B - Subcluster UMAP
+# ==============================================================================
+
+pdf(paste0(save_path, "FigureS1B_sub1_DimPlot_PC1to", dims, "res", res, ".pdf"), 
+    width = 15, height = 8)
+  
+  # Overall subcluster t-SNE
+  DimPlot(sub1, reduction = "tsne", cols = my_cols4)
+  
+  # Split by tissue type (healthy vs lesion)
+  DimPlot(sub1, reduction = "tsne", split.by = "group", cols = my_cols4)
+  
+dev.off()
+```
+
+
+```{r}
+# ==============================================================================
+# FIGURE S1C - UMAP Split by Tissue Type + Subcluster Markers
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# S1C Part 1: Split UMAP of Main Clusters
+# ------------------------------------------------------------------------------
+
+pdf(paste0(save_path, "FigureS1C_Dimplot_integrated_eth_cohort_umap_seuratclusters_split_by_disease.pdf"), 
+    width = 8, height = 6)
+  
+  umap_split <- DimPlot(
+    object = integrated_Eth_cohort, 
+    reduction = "umap", 
+    group.by = "morpho", 
+    cols = my_cols1, 
+    split.by = "group"  # Split: healthy vs lesion
+  ) + NoLegend()
+  
+  print(umap_split)
+  
+dev.off()
+
+# Display in console
+print(umap_split)
+
+# ------------------------------------------------------------------------------
+# S1C Part 2: Subcluster Marker Expression
+# ------------------------------------------------------------------------------
+
+pdf(paste0(save_path, "FigureS1C_sub1_featureplot_clustermarkers.pdf"))
+  
+  FeaturePlot(
+    sub1, 
+    features = c(
+      "KRT15",   # Keratinocytes
+      "CD81",    # Dendritic cells
+      "CD79A",   # B cells
+      "TRBC1",   # T cells
+      "JCHAIN"   # Plasma cells
+    ),
+    min.cutoff = 0, 
+    reduction = "tsne"
+  )
+  
+dev.off()
+
+
+# ==============================================================================
+# FIGURE S1D - Spatial Distribution of Cell Types
+# ==============================================================================
+# Representative samples showing spatial distribution of annotated cell types
+
+pdf(paste0(save_path, "FigureS1D_spatial_dimplots_representative_samples.pdf"))
+  
+  # Patient 2 - Healthy (P2_H)
+  print(
+    SpatialDimPlot(
+      integrated_Eth_cohort, 
+      group.by = 'morpho', 
+      images = "Eth_393_3_2",   # P2_H
+      image.alpha = 0,           # No tissue background
+      pt.size.factor = 6, 
+      cols = my_cols1, 
+      label.size = 6
+    )
+  )
+  
+  # Patient 2 - Lesion (P2_L - LCL)
+  print(
+    SpatialDimPlot(
+      integrated_Eth_cohort, 
+      group.by = 'morpho', 
+      images = "Eth_393_3_4",   # P2_L
+      image.alpha = 0, 
+      pt.size.factor = 4, 
+      cols = my_cols1, 
+      label.size = 6
+    )
+  )
+  
+  # Patient 1 - Healthy (P1_H)
+  print(
+    SpatialDimPlot(
+      integrated_Eth_cohort, 
+      group.by = 'morpho', 
+      images = "Eth_392_1_2",   # P1_H
+      image.alpha = 0, 
+      pt.size.factor = 6, 
+      cols = my_cols1, 
+      label.size = 6
+    )
+  )
+  
+  # Patient 1 - Lesion (P1_L - MCL)
+  print(
+    SpatialDimPlot(
+      integrated_Eth_cohort, 
+      group.by = 'morpho', 
+      images = "Eth_392_1_4",   # P1_L
+      image.alpha = 0, 
+      pt.size.factor = 4, 
+      cols = my_cols1, 
+      label.size = 6
+    )
+  )
+  
+dev.off()
+
+
+
+```
+```{r}
+# ==============================================================================
+# Differential Expression Analysis: Lesion vs Healthy
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Run Differential Expression Analysis
+# ------------------------------------------------------------------------------
+
+# Set identity to tissue type (healthy vs lesion)
+Idents(integrated_Eth_cohort) <- "group"
+
+# Find differentially expressed genes between lesion and healthy tissue
+de_genes <- FindMarkers(
+  integrated_Eth_cohort, 
+  ident.1 = "lesion", 
+  ident.2 = "healthy", 
+  group.by = "group",
+  min.pct = 0.1,              # Gene must be detected in ≥10% of cells in either group
+  logfc.threshold = 0.25      # Minimum log2 fold-change threshold
+)
+
+# Save raw DE results
+write.csv(
+  de_genes, 
+  paste0(save_path, "lesion_vs_healthy_degenes.csv"),
+  row.names = TRUE
+)
+
+# ------------------------------------------------------------------------------
+# Process DE Results for Volcano Plot
+# ------------------------------------------------------------------------------
+
+# Create formatted dataframe for EnhancedVolcano
+lesion_vs_healthy_df <- de_genes
+
+# Add gene names as column (instead of rownames)
+lesion_vs_healthy_df <- tibble::rownames_to_column(lesion_vs_healthy_df, var = "gene")
+
+# Rename columns to match EnhancedVolcano requirements
+lesion_vs_healthy_df$p_val <- NULL  # Remove unadjusted p-value
+colnames(lesion_vs_healthy_df) <- c("gene", "log2FoldChange", "pct1", "pct2", "pvalue")
+
+# Replace p-values of 0 with minimum R value to avoid -Inf in log scale
+lesion_vs_healthy_df$pvalue[lesion_vs_healthy_df$pvalue == 0] <- 5e-305
+
+# Set gene names back as rownames for EnhancedVolcano
+rownames(lesion_vs_healthy_df) <- lesion_vs_healthy_df$gene
+
+# ------------------------------------------------------------------------------
+# Select Genes to Highlight on Volcano Plot
+# ------------------------------------------------------------------------------
+
+# Identify cytokines, chemokines, and interferon genes
+# CCL = CC chemokines, CXCL = CXC chemokines, TNF = tumor necrosis factors
+# IL = interleukins, IFN = interferons
+cytokine_genes <- c(
+  grep("^CCL", rownames(lesion_vs_healthy_df), value = TRUE),   # CC chemokines
+  grep("^CXC", rownames(lesion_vs_healthy_df), value = TRUE),   # CXC chemokines
+  grep("^TNF", rownames(lesion_vs_healthy_df), value = TRUE),   # TNF family
+  grep("^IL", rownames(lesion_vs_healthy_df), value = TRUE),    # Interleukins
+  grep("^IFN", rownames(lesion_vs_healthy_df), value = TRUE)    # Interferons
+)
+
+# Top 10 upregulated genes (highest positive log2FC)
+top10_upregulated <- lesion_vs_healthy_df %>%
+  top_n(n = 10, wt = log2FoldChange) %>%
+  pull(gene)
+
+# Top 10 downregulated genes (lowest negative log2FC)
+top10_downregulated <- lesion_vs_healthy_df %>%
+  top_n(n = -10, wt = log2FoldChange) %>%
+  pull(gene)
+
+# Combine all genes to highlight
+genes_to_highlight <- c(cytokine_genes, top10_upregulated, top10_downregulated)
+
+# Remove duplicates
+genes_to_highlight <- unique(genes_to_highlight)
+
+# ------------------------------------------------------------------------------
+# Generate Volcano Plot
+# ------------------------------------------------------------------------------
+
+pdf(paste0(save_path, "healthy_vs_lesion_volcano_top20marked_cyto.pdf"), 
+    width = 5, height = 6)
+  
+  print(
+    EnhancedVolcano(
+      lesion_vs_healthy_df,
+      lab = rownames(lesion_vs_healthy_df),
+      x = 'log2FoldChange',
+      y = 'pvalue',
+      title = "Lesion vs Healthy",
+      subtitle = "Top genes and cytokines highlighted",
+      pCutoff = 5e-3,              # Significance threshold
+      FCcutoff = 0.5,              # Fold-change threshold (log2)
+      pointSize = 1.0,
+      labSize = 3.0,
+      drawConnectors = TRUE,        # Draw lines to labels
+      widthConnectors = 0.5,
+      max.overlaps = Inf,           # Show all selected labels
+      selectLab = genes_to_highlight,  # Only label these genes
+      boxedLabels = FALSE,
+      colAlpha = 0.5,               # Point transparency
+      legendPosition = "top",
+      legendLabSize = 10,
+      legendIconSize = 3.0
+    )
+  )
+  
+dev.off()
+
+
+```
+

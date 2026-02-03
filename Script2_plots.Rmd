@@ -1,0 +1,1070 @@
+
+---
+title: "Figure 2E-G: Dominant Cell Type Analysis and Topic Proportions"
+author: "Ethiopian CL Cohort Study"
+date: "`r Sys.Date()`"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+# ==============================================================================
+# Load Required Libraries
+# ==============================================================================
+
+# Core analysis
+library(Seurat)
+library(dplyr)
+library(tidyr)
+library(stringr)
+
+# Visualization
+library(ggplot2)
+library(patchwork)
+library(SCpubr)
+library(scales)
+library(gridExtra)
+
+# Statistics
+library(lme4)
+library(lmerTest)
+library(broom.mixed)
+
+# ==============================================================================
+# Define Study Parameters
+# ==============================================================================
+
+study_name <- "ethiopian4mm_cohort"
+study_path <- "F:/SD23.9.2_Dioraphte_Ethiopian_4mm_ND23.09/"
+read_path <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_comb/test/")
+save_path <- read_path
+
+# Create output directory if needed
+if (!dir.exists(save_path)) {
+  dir.create(save_path, recursive = TRUE)
+}
+```
+
+# Overview
+
+This script performs:
+1. **Figure 2E**: UMAP visualizations split by dominant cell type
+2. **Figure 2F**: Spatial plots showing dominant cell type across all samples
+3. **Figure 2G**: Stacked bar plots of immune and stromal topic proportions
+4. **Supplementary Table 3**: Linear mixed model results comparing lesional vs non-lesional tissue
+input: integrated_Eth_cohort_filtered_23stdeconvTopics_labelled.rds
+---
+```{r load_data}
+# ==============================================================================
+# LOAD INTEGRATED SEURAT OBJECT WITH STDECONVOLVE TOPICS
+# ==============================================================================
+
+cat("\n==================================================\n")
+cat("Loading Integrated Seurat Object\n")
+cat("==================================================\n\n")
+
+# Load Seurat object with 23 combined STdeconvolve topics
+integrated_Eth_cohort_filtered <- readRDS(
+  paste0(read_path, "integrated_Eth_cohort_filtered_23stdeconvTopics_labelled.rds")
+)
+
+cat("Seurat object loaded successfully\n")
+cat("Spots:", ncol(integrated_Eth_cohort_filtered), "\n")
+cat("Genes:", nrow(integrated_Eth_cohort_filtered), "\n")
+cat("Metadata columns:", ncol(integrated_Eth_cohort_filtered@meta.data), "\n\n")
+
+# Verify STdeconvolve topics are present
+# Get STdeconvolve topic columns
+stdeconv_cols <- colnames(integrated_Eth_cohort_filtered@meta.data)[69:91]
+
+cat("STdeconvolve topics in metadata (columns 69:91):\n")
+print(stdeconv_cols)
+
+cat("\nNumber of topics:", length(stdeconv_cols), "\n")
+
+# Verify these are the correct topics
+stopifnot(length(stdeconv_cols) == 23)
+```
+
+
+```{r define_color_palettes}
+# ==============================================================================
+# DEFINE COLOR PALETTES
+# ==============================================================================
+
+# Topic color palette (matching previous figures)
+ident_colours <- c(
+  "APC_EarlyPlasma"   = "#00CED1",
+  "BasalKer"          = "#474747",
+  "Cytomono"          = "#00008B",
+  "EccrineSweatGlands" = "#B2DF8A",
+  "HairFollicle"      = "#A6CEE3",
+  "InflammKer"        = "#FF69B4",
+  "LC1"               = "#CAB2D6",
+  "LC2"               = "#FB9A99",
+  "LC3"               = "#DC143C",
+  "LE"                = "#FFE4E1",
+  "Lipid_Macs"        = "#FF7F00",
+  "M1_mac"            = "darkred",
+  "M2_Th"             = "#32CD32",
+  "Muscle"            = "#faf4cf",
+  "Neut_Ker"          = "#FFD700",
+  "Plasmablast"       = "#00CED1",
+  "Schwann"           = "#F0FFF0",
+  "Sebaceous"         = "#B8860B",
+  "SuprabasalKer"     = "#BDB76B",
+  "Tact"              = "#6A3D9A",
+  "Tissue_Rep_M2Mac"  = "#4169E1",
+  "TopKer"            = "#FDBF6F",
+  "VE"                = "#B0C4DE"
+)
+
+# Sort alphabetically
+my_cols1 <- ident_colours[order(names(ident_colours))]
+
+# Sample color palette
+orig_ident_colors <- c(
+  "Eth_391_4_2" = "#005f73",
+  "Eth_391_4_4" = "#001219",
+  "Eth_391_7_2" = "#F0FFF0",
+  "Eth_391_7_4" = "#B2DF8A",
+  "Eth_392_1_2" = "#e9d8a6",
+  "Eth_392_1_4" = "#ee9b00",
+  "Eth_392_5_2" = "#FFE4E1",
+  "Eth_392_5_4" = "#FF69B4",
+  "Eth_393_3_2" = "#DC143C",
+  "Eth_393_3_4" = "darkred"
+)
+
+# Group colors
+group_colors <- c(healthy = "#32CD32", lesion = "#DC143C")
+```
+
+
+```{r calculate_dominant_celltype}
+# ==============================================================================
+# FIGURE 2E & 2F PREPARATION: CALCULATE DOMINANT CELL TYPE
+# ==============================================================================
+
+cat("\n==================================================\n")
+cat("Calculating Dominant Cell Type per Spot\n")
+cat("==================================================\n\n")
+
+# ------------------------------------------------------------------------------
+# Extract Topic Proportions
+# ------------------------------------------------------------------------------
+
+# Get column indices for STdeconvolve topics (assumed to be columns 69:91)
+
+cat("STdeconvolve topics:\n")
+print(stdeconv_cols)
+
+# Extract topic proportion matrix
+stdeconv_matrix <- integrated_Eth_cohort_filtered@meta.data[, stdeconv_cols]
+
+# Verify matrix dimensions
+cat("\nTopic matrix dimensions:", nrow(stdeconv_matrix), "spots x", 
+    ncol(stdeconv_matrix), "topics\n")
+
+# ------------------------------------------------------------------------------
+# Identify Dominant Cell Type per Spot
+# ------------------------------------------------------------------------------
+
+# For each spot, find the topic with maximum proportion
+dominant_celltype <- apply(stdeconv_matrix, 1, function(x) {
+  stdeconv_cols[which.max(x)]
+})
+
+# Add to metadata
+integrated_Eth_cohort_filtered$dominant_celltype <- dominant_celltype
+
+# Set as active identity
+Idents(integrated_Eth_cohort_filtered) <- dominant_celltype
+
+# Summary statistics
+cat("\nDominant cell type distribution:\n")
+print(table(integrated_Eth_cohort_filtered$dominant_celltype))
+
+cat("\nDominant cell type levels:\n")
+print(levels(Idents(integrated_Eth_cohort_filtered)))
+```
+```{r figure_2E_umap_overall}
+# ==============================================================================
+# FIGURE 2E: UMAP VISUALIZATIONS
+# ==============================================================================
+
+cat("\n==================================================\n")
+cat("Creating Figure 2E: UMAP by Dominant Cell Type\n")
+cat("==================================================\n\n")
+
+# ------------------------------------------------------------------------------
+# Overall UMAP (Not Split)
+# ------------------------------------------------------------------------------
+
+pdf(paste0(save_path, "Figure2E_UMAP_dominant_celltype_overall.pdf"), 
+    width = 12, height = 8)
+  umap_overall <- DimPlot(
+    integrated_Eth_cohort_filtered, 
+    cols = my_cols1, 
+    pt.size = 2,
+    label = FALSE
+  ) +
+  ggtitle("Dominant Cell Type Distribution") +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    legend.position = "right"
+  )
+  print(umap_overall)
+dev.off()
+
+cat("Saved: Figure2E_UMAP_dominant_celltype_overall.pdf\n")
+```
+
+```{r figure_2E_umap_split}
+# ------------------------------------------------------------------------------
+# UMAP Split by Dominant Cell Type (SCpubr)
+# ------------------------------------------------------------------------------
+
+# Define immune and stromal populations
+immune_idents <- c(
+  "LC1", "LC2", "LC3", "Tissue_Rep_M2Mac", "Cytomono",
+  "Lipid_Macs", "M1_mac", "M2_Th", "Plasmablast",
+  "Tact", "APC_EarlyPlasma", "Neut_Ker"
+)
+
+stromal_idents <- c(
+  "VE", "Sebaceous", "Schwann", "EccrineSweatGlands",
+  "BasalKer", "SuprabasalKer", "Muscle", "HairFollicle",
+  "TopKer", "LE", "InflammKer"
+)
+
+# ------------------------------------------------------------------------------
+# Stromal Populations UMAP
+# ------------------------------------------------------------------------------
+
+cat("\nGenerating stromal UMAP split...\n")
+
+pdf(paste0(save_path, "Figure2E_UMAP_stromal_split.pdf"), 
+    width = 10, height = 8)
+SCpubr::do_DimPlot(
+    integrated_Eth_cohort_filtered, 
+    split.by = "dominant_celltype", 
+    idents.keep = stromal_idents,
+    legend.position = "none",
+    font.size = 12, 
+    pt.size = 0.2, 
+    colors.use = ident_colours, 
+    shuffle = TRUE, 
+    raster = FALSE, #turning raster on will take a long time to run; if turning raser on. keep pt.size=30
+    border.size = 0.1
+  )
+dev.off()
+
+
+
+cat("Saved: Figure2E_UMAP_stromal_split.pdf\n")
+
+# ------------------------------------------------------------------------------
+# Immune Populations UMAP
+# ------------------------------------------------------------------------------
+
+cat("Generating immune UMAP split...\n")
+
+pdf(paste0(save_path, "Figure2E_UMAP_immune_split.pdf"), 
+    width = 10, height = 11)
+  immune_umap <- SCpubr::do_DimPlot(
+    integrated_Eth_cohort_filtered, 
+    split.by = "dominant_celltype", 
+    idents.keep = immune_idents,
+    legend.position = "none",
+    font.size = 12, 
+    pt.size = 0.2, 
+    colors.use = ident_colours, 
+    shuffle = TRUE, 
+    raster = FALSE, 
+    border.size = 0.1
+  )
+  print(immune_umap)
+dev.off()
+
+cat("Saved: Figure2E_UMAP_immune_split.pdf\n")
+```
+
+
+```{r figure_2F_spatial}
+# ==============================================================================
+# FIGURE 2F: SPATIAL PLOTS - DOMINANT CELL TYPE
+# ==============================================================================
+
+cat("\n==================================================\n")
+cat("Creating Figure 2F: Spatial Distribution Plots\n")
+cat("==================================================\n\n")
+
+# Get all sample names
+samples <- unique(integrated_Eth_cohort_filtered$orig.ident)
+cat("Samples to plot:", length(samples), "\n")
+print(samples)
+
+# ------------------------------------------------------------------------------
+# Generate Spatial Plots for All Samples
+# ------------------------------------------------------------------------------
+
+pdf(paste0(save_path, "Figure2F_spatial_dominant_celltype_all_samples.pdf"), 
+    width = 12, height = 10)
+
+for (sample in samples) {
+  
+  cat("  Plotting:", sample, "\n")
+  
+  spatial_plot <- SpatialDimPlot(
+    integrated_Eth_cohort_filtered, 
+    group.by = 'dominant_celltype', 
+    images = sample, 
+    image.alpha = 0.5,         # Semi-transparent tissue image
+    pt.size.factor = 1.5,      # Spot size
+    cols = my_cols1, 
+    label.size = 6,
+    crop = FALSE               # Show full image
+  ) +
+  ggtitle(paste("Sample:", sample)) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    legend.position = "right"
+  )
+  
+  # Increase legend point size
+  spatial_plot_final <- spatial_plot & 
+    guides(fill = guide_legend(override.aes = list(size = 5)))
+  
+  print(spatial_plot_final)
+}
+
+dev.off()
+
+cat("\nSaved: Figure2F_spatial_dominant_celltype_all_samples.pdf\n")
+
+# ------------------------------------------------------------------------------
+# Example: Single Sample with No Background
+# ------------------------------------------------------------------------------
+
+# Create one example with no tissue background (image.alpha = 0)
+pdf(paste0(save_path, "Figure2F_example_no_background.pdf"), 
+    width = 8, height = 8)
+  
+  example_sample <- samples[1]  # First sample
+  
+  example_plot <- SpatialDimPlot(
+    integrated_Eth_cohort_filtered, 
+    group.by = 'dominant_celltype', 
+    images = example_sample, 
+    image.alpha = 0,           # No tissue background
+    pt.size.factor = 4, 
+    cols = my_cols1, 
+    label.size = 6
+  )
+  
+  example_plot_final <- example_plot & 
+    guides(fill = guide_legend(override.aes = list(size = 10)))
+  
+  print(example_plot_final)
+  
+dev.off()
+
+cat("Saved: Figure2F_example_no_background.pdf\n")
+```
+
+
+```{r figure_2G_data_prep}
+# ==============================================================================
+# FIGURE 2G: STACKED BAR PLOTS - DATA PREPARATION
+# ==============================================================================
+
+cat("\n==================================================\n")
+cat("Preparing Data for Figure 2G\n")
+cat("==================================================\n\n")
+
+# ------------------------------------------------------------------------------
+# Extract Metadata for Grouping
+# ------------------------------------------------------------------------------
+
+# Match spot IDs to extract group and patient information
+spot_groups <- integrated_Eth_cohort_filtered$group[
+  match(rownames(stdeconv_matrix), colnames(integrated_Eth_cohort_filtered))
+]
+
+patient_id <- integrated_Eth_cohort_filtered$sample_id[
+  match(rownames(stdeconv_matrix), colnames(integrated_Eth_cohort_filtered))
+]
+
+cat("Group distribution:\n")
+print(table(spot_groups))
+
+cat("\nPatient distribution:\n")
+print(table(patient_id))
+
+# ------------------------------------------------------------------------------
+# Create Combined Data Frame
+# ------------------------------------------------------------------------------
+
+# Combine topic proportions with metadata
+topic_by_group <- data.frame(
+  spot_id = colnames(integrated_Eth_cohort_filtered),
+  group = spot_groups,
+  patient_id = patient_id,
+  stdeconv_matrix,
+  check.names = FALSE
+)
+
+# Save raw data
+write.csv(
+  topic_by_group, 
+  paste0(save_path, "topic_proportions_by_spot.csv"),
+  row.names = FALSE
+)
+
+cat("\nSaved: topic_proportions_by_spot.csv\n")
+```
+
+
+```{r figure_2G_normalize}
+# ------------------------------------------------------------------------------
+# Calculate Average Topic Proportions
+# ------------------------------------------------------------------------------
+
+# Average by group and patient
+topic_averages <- topic_by_group %>%
+  group_by(group, patient_id) %>%
+  summarise(across(all_of(stdeconv_cols), mean, na.rm = TRUE), .groups = "drop")
+
+# Average by group only
+topic_averages_group <- topic_by_group %>%
+  group_by(group) %>%
+  summarise(across(all_of(stdeconv_cols), mean, na.rm = TRUE), .groups = "drop")
+
+# ------------------------------------------------------------------------------
+# Normalize to Sum to 100%
+# ------------------------------------------------------------------------------
+
+# Check current row sums
+cat("\nRow sums before normalization:\n")
+print(rowSums(topic_averages[, stdeconv_cols]))
+
+# Normalize to ensure each row sums to 1.0
+topic_averages_normalized <- topic_averages %>%
+  rowwise() %>%
+  mutate(
+    row_sum = sum(c_across(all_of(stdeconv_cols)), na.rm = TRUE),
+    across(all_of(stdeconv_cols), ~ .x / row_sum)
+  ) %>%
+  select(-row_sum) %>%
+  ungroup()
+
+topic_averages_group_normalized <- topic_averages_group %>%
+  rowwise() %>%
+  mutate(
+    row_sum = sum(c_across(all_of(stdeconv_cols)), na.rm = TRUE),
+    across(all_of(stdeconv_cols), ~ .x / row_sum)
+  ) %>%
+  select(-row_sum) %>%
+  ungroup()
+
+# Verify normalization
+cat("\nRow sums after normalization:\n")
+print(rowSums(topic_averages_group_normalized[, stdeconv_cols]))
+
+# ------------------------------------------------------------------------------
+# Reshape for Plotting
+# ------------------------------------------------------------------------------
+
+# Long format for group only
+topic_averages_group_long <- topic_averages_group_normalized %>%
+  pivot_longer(
+    cols = all_of(stdeconv_cols), 
+    names_to = "topic", 
+    values_to = "average_proportion"
+  )
+
+# Long format for group and patient
+topic_averages_long <- topic_averages_normalized %>%
+  pivot_longer(
+    cols = all_of(stdeconv_cols), 
+    names_to = "topic", 
+    values_to = "average_proportion"
+  ) %>%
+  mutate(group_patient = paste(group, patient_id, sep = "."))
+```
+
+
+```{r figure_2G_immune_stromal_plots}
+# ==============================================================================
+# FIGURE 2G: STACKED BAR PLOTS - IMMUNE VS STROMAL
+# ==============================================================================
+
+cat("\n==================================================\n")
+cat("Creating Figure 2G: Stacked Bar Plots\n")
+cat("==================================================\n\n")
+
+# ------------------------------------------------------------------------------
+# Separate Immune and Stromal Topics
+# ------------------------------------------------------------------------------
+
+# Create separate datasets
+topic_averages_immune_long <- topic_averages_long %>%
+  filter(topic %in% immune_idents)
+
+topic_averages_stromal_long <- topic_averages_long %>%
+  filter(topic %in% stromal_idents)
+
+topic_averages_group_immune_long <- topic_averages_group_long %>%
+  filter(topic %in% immune_idents)
+
+topic_averages_group_stromal_long <- topic_averages_group_long %>%
+  filter(topic %in% stromal_idents)
+
+# ------------------------------------------------------------------------------
+# Stromal Stacked Bar Plot (By Group)
+# ------------------------------------------------------------------------------
+
+cat("Creating stromal stacked bar plot...\n")
+
+p_stromal_group <- ggplot(
+  topic_averages_group_stromal_long, 
+  aes(x = group, y = average_proportion, fill = topic)
+) +
+  geom_col(position = "stack", color = "white", linewidth = 0.1) +
+  scale_fill_manual(values = my_cols1, name = "Stromal Topics") +
+  scale_y_continuous(
+    labels = scales::percent_format(), 
+    expand = c(0, 0)
+  ) +
+  labs(
+    title = "Stromal Cell Type Proportions",
+    x = "Tissue Type",
+    y = "Proportion (%)"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    legend.position = "right",
+    legend.text = element_text(size = 10)
+  )
+
+ggsave(
+  paste0(save_path, "Figure2G_stacked_bar_stromal.pdf"), 
+  p_stromal_group,
+  width = 4, height = 5
+)
+
+cat("Saved: Figure2G_stacked_bar_stromal.pdf\n")
+
+# ------------------------------------------------------------------------------
+# Immune Stacked Bar Plot (By Group)
+# ------------------------------------------------------------------------------
+
+cat("Creating immune stacked bar plot...\n")
+
+p_immune_group <- ggplot(
+  topic_averages_group_immune_long, 
+  aes(x = group, y = average_proportion, fill = topic)
+) +
+  geom_col(position = "stack", color = "white", linewidth = 0.1) +
+  scale_fill_manual(values = my_cols1, name = "Immune Topics") +
+  scale_y_continuous(
+    labels = scales::percent_format(), 
+    expand = c(0, 0)
+  ) +
+  labs(
+    title = "Immune Cell Type Proportions",
+    x = "Tissue Type",
+    y = "Proportion (%)"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    legend.position = "right",
+    legend.text = element_text(size = 10)
+  )
+
+ggsave(
+  paste0(save_path, "Figure2G_stacked_bar_immune.pdf"), 
+  p_immune_group,
+  width = 4, height = 5
+)
+
+cat("Saved: Figure2G_stacked_bar_immune.pdf\n")
+
+# ------------------------------------------------------------------------------
+# Combined Side-by-Side Plot
+# ------------------------------------------------------------------------------
+
+combined_plot <- p_stromal_group + p_immune_group +
+  plot_layout(ncol = 2, guides = "collect")
+
+ggsave(
+  paste0(save_path, "Figure2G_stacked_bar_combined.pdf"),
+  combined_plot,
+  width = 10, height = 5
+)
+
+cat("Saved: Figure2G_stacked_bar_combined.pdf\n")
+
+# Display plots
+print(p_stromal_group)
+print(p_immune_group)
+```
+
+
+```{r figure_2G_faceted}
+# ------------------------------------------------------------------------------
+# Faceted Plots by Patient within Group
+# ------------------------------------------------------------------------------
+
+cat("\nCreating faceted plots by patient...\n")
+
+# Immune faceted plot
+p_immune_faceted <- ggplot(
+  topic_averages_immune_long, 
+  aes(x = patient_id, y = average_proportion, fill = topic)
+) +
+  geom_col(position = "stack", color = "white", linewidth = 0.1) +
+  scale_fill_manual(values = my_cols1, name = "Immune Topics") +
+  scale_y_continuous(
+    labels = scales::percent_format(), 
+    expand = c(0, 0)
+  ) +
+  facet_wrap(~ group, scales = "free_x", ncol = 2) +
+  labs(
+    title = "Immune Cell Type Proportions by Patient",
+    x = "Patient ID",
+    y = "Proportion (%)"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    legend.position = "right",
+    strip.text = element_text(face = "bold", size = 12)
+  )
+
+# Stromal faceted plot
+p_stromal_faceted <- ggplot(
+  topic_averages_stromal_long, 
+  aes(x = patient_id, y = average_proportion, fill = topic)
+) +
+  geom_col(position = "stack", color = "white", linewidth = 0.1) +
+  scale_fill_manual(values = my_cols1, name = "Stromal Topics") +
+  scale_y_continuous(
+    labels = scales::percent_format(), 
+    expand = c(0, 0)
+  ) +
+  facet_wrap(~ group, scales = "free_x", ncol = 2) +
+  labs(
+    title = "Stromal Cell Type Proportions by Patient",
+    x = "Patient ID",
+    y = "Proportion (%)"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    legend.position = "right",
+    strip.text = element_text(face = "bold", size = 12)
+  )
+
+# Save faceted plots
+ggsave(
+  paste0(save_path, "Figure2G_immune_faceted_by_patient.pdf"),
+  p_immune_faceted,
+  width = 10, height = 6
+)
+
+ggsave(
+  paste0(save_path, "Figure2G_stromal_faceted_by_patient.pdf"),
+  p_stromal_faceted,
+  width = 10, height = 6
+)
+
+cat("Saved: Faceted plots by patient\n")
+```
+
+
+```{r supplementary_table_3_prep}
+# ==============================================================================
+# SUPPLEMENTARY TABLE 3: LINEAR MIXED MODEL ANALYSIS
+# ==============================================================================
+
+cat("\n==================================================\n")
+cat("Performing Statistical Analysis for Supp Table 3\n")
+cat("==================================================\n\n")
+
+# ------------------------------------------------------------------------------
+# Prepare Spot-Level Data with Patient Information
+# ------------------------------------------------------------------------------
+
+# Extract patient ID and condition from sample_id
+celltype_spot_level <- integrated_Eth_cohort_filtered@meta.data %>%
+  select(sample_id, group, all_of(stdeconv_cols)) %>%
+  pivot_longer(
+    cols = -c(sample_id, group), 
+    names_to = "celltype", 
+    values_to = "proportion"
+  ) %>%
+  mutate(
+    patient_id = str_extract(sample_id, "P[0-9]+"),  # Extract P1, P2, etc.
+    condition = factor(
+      ifelse(str_detect(sample_id, "_L$"), "Lesional", "Non-lesional"),
+      levels = c("Non-lesional", "Lesional")  # Reference = Non-lesional
+    )
+  )
+
+cat("Total spots in analysis:", nrow(celltype_spot_level), "\n")
+cat("\nSpots per condition:\n")
+print(table(celltype_spot_level$condition))
+
+cat("\nSpots per patient:\n")
+print(table(celltype_spot_level$patient_id))
+
+# ------------------------------------------------------------------------------
+# Filter to Cell Types with >1% Expression
+# ------------------------------------------------------------------------------
+
+# Calculate mean expression per group
+celltype_enrichment <- celltype_spot_level %>%
+  group_by(group, celltype) %>%
+  summarise(mean_prop = mean(proportion, na.rm = TRUE), .groups = "drop")
+
+# Filter to cell types with >1% in at least one group
+celltype_max <- celltype_enrichment %>%
+  group_by(celltype) %>%
+  summarise(max_prop = max(mean_prop)) %>%
+  filter(max_prop > 0.01)
+
+cat("\nCell types passing 1% threshold:\n")
+print(celltype_max$celltype)
+
+# Filter spot-level data
+celltype_spot_level_filtered <- celltype_spot_level %>%
+  filter(celltype %in% celltype_max$celltype)
+
+cat("\nFiltered to", length(unique(celltype_spot_level_filtered$celltype)), "cell types\n")
+```
+```{r supplementary_table_3_mixed_models}
+# ------------------------------------------------------------------------------
+# Fit Linear Mixed Models
+# ------------------------------------------------------------------------------
+
+cat("\n==================================================\n")
+cat("Fitting Linear Mixed Models\n")
+cat("==================================================\n\n")
+
+celltype_mixed_stats <- data.frame()
+
+for (ct in unique(celltype_spot_level_filtered$celltype)) {
+  
+  cat("Processing:", ct, "... ")
+  
+  ct_data <- celltype_spot_level_filtered %>%
+    filter(celltype == ct)
+  
+  tryCatch({
+    
+    # Mixed model with patient as random effect
+    # Fixed effect: condition (Lesional vs Non-lesional)
+    # Random effect: patient (accounts for patient-specific baselines)
+    model <- lmer(
+      proportion ~ condition + (1|patient_id), 
+      data = ct_data,
+      REML = TRUE
+    )
+    
+    # Extract fixed effects
+    model_summary <- summary(model)
+    fixed_effects <- coef(model_summary)
+    
+    # Get the condition effect (difference: Lesional - Non-lesional)
+    # Note: If Non-lesional is reference, coefficient will be for Lesional effect
+    condition_row <- fixed_effects["conditionLesional", ]
+    
+    # Calculate means per condition
+    mean_non_lesional <- mean(
+      ct_data$proportion[ct_data$condition == "Non-lesional"], 
+      na.rm = TRUE
+    )
+    mean_lesional <- mean(
+      ct_data$proportion[ct_data$condition == "Lesional"], 
+      na.rm = TRUE
+    )
+    
+    # Get variance components
+    var_comps <- as.data.frame(VarCorr(model))
+    random_var <- var_comps$vcov[var_comps$grp == "patient_id"]
+    residual_var <- var_comps$vcov[var_comps$grp == "Residual"]
+    
+    # Intraclass correlation coefficient (ICC)
+    icc <- random_var / (random_var + residual_var)
+    
+    # Effect size: Cohen's d (standardized mean difference)
+    pooled_sd <- sqrt(random_var + residual_var)
+    cohens_d <- condition_row["Estimate"] / pooled_sd
+    
+    # Store results
+    celltype_mixed_stats <- rbind(
+      celltype_mixed_stats,
+      data.frame(
+        celltype = ct,
+        mean_non_lesional = mean_non_lesional,
+        mean_lesional = mean_lesional,
+        estimate = condition_row["Estimate"],  # β coefficient
+        se = condition_row["Std. Error"],
+        df = condition_row["df"],
+        t_value = condition_row["t value"],
+        p_value = condition_row["Pr(>|t|)"],
+        cohens_d = cohens_d,
+        icc = icc,
+        n_spots = nrow(ct_data),
+        stringsAsFactors = FALSE
+      )
+    )
+    
+    cat("✓\n")
+    
+  }, error = function(e) {
+    cat("✗ Error:", e$message, "\n")
+  })
+}
+
+cat("\n==================================================\n")
+cat("Mixed Models Complete\n")
+cat("==================================================\n")
+```
+
+
+```{r supplementary_table_3_interpret}
+# ------------------------------------------------------------------------------
+# Multiple Testing Correction and Interpretation
+# ------------------------------------------------------------------------------
+
+# Benjamini-Hochberg (FDR) correction
+celltype_mixed_stats$p_adj_BH <- p.adjust(
+  celltype_mixed_stats$p_value, 
+  method = "BH"
+)
+
+# Bonferroni correction (more conservative)
+celltype_mixed_stats$p_adj_bonferroni <- p.adjust(
+  celltype_mixed_stats$p_value, 
+  method = "bonferroni"
+)
+
+# Calculate fold change and log2 fold change
+celltype_mixed_stats <- celltype_mixed_stats %>%
+  mutate(
+    fold_change = mean_lesional / (mean_non_lesional + 1e-10),
+    log2fc = log2(fold_change),
+    
+    # Significance levels
+    significance = case_when(
+      p_adj_BH < 0.001 ~ "***",
+      p_adj_BH < 0.01 ~ "**",
+      p_adj_BH < 0.05 ~ "*",
+      TRUE ~ "ns"
+    ),
+    
+    # Enrichment status
+    enrichment_status = case_when(
+      p_adj_BH < 0.05 & fold_change > 1.5 ~ "Enriched in Lesional",
+      p_adj_BH < 0.05 & fold_change < 0.67 ~ "Enriched in Non-lesional",
+      p_adj_BH < 0.05 ~ "Significant difference",
+      TRUE ~ "Not significant"
+    ),
+    
+    # Effect size interpretation
+    effect_interpretation = case_when(
+      abs(cohens_d) < 0.2 ~ "Negligible",
+      abs(cohens_d) < 0.5 ~ "Small",
+      abs(cohens_d) < 0.8 ~ "Medium",
+      TRUE ~ "Large"
+    )
+  ) %>%
+  arrange(p_adj_BH, desc(abs(cohens_d)))
+
+# ------------------------------------------------------------------------------
+# Summary Statistics
+# ------------------------------------------------------------------------------
+
+cat("\n==================================================\n")
+cat("Statistical Analysis Summary\n")
+cat("==================================================\n")
+cat("Total cell types tested:", nrow(celltype_mixed_stats), "\n")
+cat("Significant after BH correction (p_adj < 0.05):", 
+    sum(celltype_mixed_stats$p_adj_BH < 0.05), "\n")
+cat("  - Enriched in Lesional:", 
+    sum(celltype_mixed_stats$enrichment_status == "Enriched in Lesional"), "\n")
+cat("  - Enriched in Non-lesional:", 
+    sum(celltype_mixed_stats$enrichment_status == "Enriched in Non-lesional"), "\n")
+cat("==================================================\n\n")
+
+# ------------------------------------------------------------------------------
+# Display Significant Results
+# ------------------------------------------------------------------------------
+
+# Enriched in lesional
+lesional_enriched <- celltype_mixed_stats %>%
+  filter(enrichment_status == "Enriched in Lesional") %>%
+  arrange(desc(abs(cohens_d)))
+
+if (nrow(lesional_enriched) > 0) {
+  cat("\n=== CELL TYPES ENRICHED IN LESIONAL TISSUE ===\n")
+  cat("──────────────────────────────────────────────────\n")
+  for (i in 1:nrow(lesional_enriched)) {
+    cat(sprintf(
+      "%-25s: %.2fx, β=%.4f, d=%.2f (%s), p_adj=%.2e %s\n",
+      lesional_enriched$celltype[i],
+      lesional_enriched$fold_change[i],
+      lesional_enriched$estimate[i],
+      lesional_enriched$cohens_d[i],
+      lesional_enriched$effect_interpretation[i],
+      lesional_enriched$p_adj_BH[i],
+      lesional_enriched$significance[i]
+    ))
+  }
+}
+
+# Enriched in non-lesional
+non_lesional_enriched <- celltype_mixed_stats %>%
+  filter(enrichment_status == "Enriched in Non-lesional") %>%
+  arrange(abs(cohens_d))
+
+if (nrow(non_lesional_enriched) > 0) {
+  cat("\n=== CELL TYPES ENRICHED IN NON-LESIONAL TISSUE ===\n")
+  cat("────────────────────────────────────────────────────\n")
+  for (i in 1:nrow(non_lesional_enriched)) {
+    cat(sprintf(
+      "%-25s: %.2fx, β=%.4f, d=%.2f (%s), p_adj=%.2e %s\n",
+      non_lesional_enriched$celltype[i],
+      non_lesional_enriched$fold_change[i],
+      non_lesional_enriched$estimate[i],
+      non_lesional_enriched$cohens_d[i],
+      non_lesional_enriched$effect_interpretation[i],
+      non_lesional_enriched$p_adj_BH[i],
+      non_lesional_enriched$significance[i]
+    ))
+  }
+}
+```
+
+
+```{r supplementary_table_3_save}
+# ==============================================================================
+# SAVE SUPPLEMENTARY TABLE 3
+# ==============================================================================
+
+cat("\n==================================================\n")
+cat("Saving Supplementary Table 3\n")
+cat("==================================================\n\n")
+
+# ------------------------------------------------------------------------------
+# Format for Publication
+# ------------------------------------------------------------------------------
+
+supp_table_3 <- celltype_mixed_stats %>%
+  select(
+    celltype,
+    mean_non_lesional,
+    mean_lesional,
+    estimate,
+    se,
+    t_value,
+    df,
+    p_value,
+    p_adj_BH,
+    fold_change,
+    log2fc,
+    cohens_d,
+    icc,
+    effect_interpretation,
+    enrichment_status,
+    significance,
+    n_spots
+  ) %>%
+  arrange(p_adj_BH)
+
+# Rename columns for publication
+colnames(supp_table_3) <- c(
+  "Cell_Type",
+  "Mean_Proportion_Non_Lesional",
+  "Mean_Proportion_Lesional",
+  "Beta_Coefficient",
+  "Standard_Error",
+  "t_Statistic",
+  "Degrees_of_Freedom",
+  "P_Value",
+  "Adjusted_P_Value_BH",
+  "Fold_Change",
+  "Log2_Fold_Change",
+  "Cohens_D",
+  "ICC",
+  "Effect_Size",
+  "Enrichment_Status",
+  "Significance",
+  "N_Spots"
+)
+
+# ------------------------------------------------------------------------------
+# Save Files
+# ------------------------------------------------------------------------------
+
+# Main results table
+write.csv(
+  supp_table_3,
+  paste0(save_path, "Supplementary_Table_3_Mixed_Model_Results.csv"),
+  row.names = FALSE
+)
+
+# Lesional enriched
+write.csv(
+  lesional_enriched,
+  paste0(save_path, "CellTypes_Enriched_Lesional_MixedModel.csv"),
+  row.names = FALSE
+)
+
+# Non-lesional enriched
+write.csv(
+  non_lesional_enriched,
+  paste0(save_path, "CellTypes_Enriched_NonLesional_MixedModel.csv"),
+  row.names = FALSE
+)
+
+cat("Saved:\n")
+cat("  - Supplementary_Table_3_Mixed_Model_Results.csv\n")
+cat("  - CellTypes_Enriched_Lesional_MixedModel.csv\n")
+cat("  - CellTypes_Enriched_NonLesional_MixedModel.csv\n")
+```
+
+```{r session_info}
+# ==============================================================================
+# ANALYSIS COMPLETE
+# ==============================================================================
+
+cat("\n==================================================\n")
+cat("Figure 2E-G Analysis Complete!\n")
+cat("==================================================\n\n")
+
+cat("Generated Files:\n")
+cat("FIGURES:\n")
+cat("  2E - UMAP visualizations (overall, stromal, immune)\n")
+cat("  2F - Spatial plots for all 10 samples\n")
+cat("  2G - Stacked bar plots (stromal and immune)\n")
+cat("\nSTATISTICS:\n")
+cat("  Supplementary Table 3 - Linear mixed model results\n")
+cat("  Cell type enrichment tables\n")
+cat("\n==================================================\n")
+
+# Session info for reproducibility
+cat("\nSession Info:\n")
+sessionInfo()
+```

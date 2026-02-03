@@ -1,0 +1,1257 @@
+---
+title: "P6_L Analysis - Figure 8 and Supplementary Figure S7"
+output: html_document
+date: "2025-12-15"
+---
+
+# ============================================
+# SETUP AND LIBRARIES
+# ============================================
+```{r setup, include=FALSE}
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(tidyr)
+library(patchwork)
+library(ggpubr)
+library(pheatmap)
+library(ComplexHeatmap)
+library(circlize)
+library(RColorBrewer)
+library(viridis)
+library(rstatix)
+library(SCpubr)
+library(scatterpie)
+library(tibble)
+
+# Define study parameters
+study_name <- "ethiopian4mm_cohort"
+study_path <- "F:/SD23.9.2_Dioraphte_Ethiopian_4mm_ND23.09/"
+
+# Define samples (removed patient 5 lesion and non lesional)
+samples <- c("392_1_2", "392_1_4", "393_3_2", "393_3_4", 
+             "391_4_2", "391_4_4", "392_5_2", "392_5_4",
+             "391_7_2", "391_7_4")
+
+sample_group <- rep(c("healthy", "lesion"), 5)
+disease_group <- c("MCL", "healthy", "LCL", "healthy", "MCL", 
+                   "healthy", "LCL", "healthy", "DCL", "healthy")
+
+# Define paths
+read_path <- paste0(study_path, "R/No_P5/")
+save_pathL <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_sep/lesion/iteration_nov2025/")
+save_path <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_comb/")
+
+# P6 annotation CSV paths
+p6_annot_base <- paste0(study_path, "V12N28-391/")
+p6_h_epi_csv <- paste0(p6_annot_base, "PK_391_7_2_run/outs/Keratinocytes.csv")
+p6_l_epi_csv <- paste0(p6_annot_base, "PK_391_7_4_run/outs/All_Keratinocyte.csv")
+p6_l_subclass_csv <- paste0(p6_annot_base, "PK_391_7_4_run/outs/Keratinocyte_subclass.csv")
+
+# Create save directory for P6
+save_pathP6 <- paste0(save_pathL, "P6/test/")
+if(!dir.exists(save_pathP6)) {
+  dir.create(save_pathP6, recursive = TRUE)
+}
+```
+
+# ============================================
+# LOAD DATA AND DEFINE COLORS
+# ============================================
+```{r load_data_and_setup}
+# Load lesion-only integrated object
+integrated_Eth_cohort_filteredL <- readRDS(paste0(save_pathL, "Lesion_integrated_Eth_cohort_filtered_35stdeconvTopics_reclus_relabelled_COMBINED_dominantTopic_added.rds"))
+
+cat("Lesion-only object loaded:", ncol(integrated_Eth_cohort_filteredL), "spots\n")
+print(table(integrated_Eth_cohort_filteredL$sample_id))
+
+# Load combined lesion + healthy integrated object
+integrated_Eth_cohort_filtered <- readRDS(paste0(save_path, "Combined_integrated_Eth_cohort_obj_26top_domcell_added.rds"))
+
+cat("Combined object loaded:", ncol(integrated_Eth_cohort_filtered), "spots\n")
+print(table(integrated_Eth_cohort_filtered$sample_id))
+
+# Define cell types (35 topics from lesional object)
+celltypes <- colnames(integrated_Eth_cohort_filteredL@meta.data)[69:103]
+
+# Define immune topics
+immune_topics <- c(
+  "IgM_Plasma", "IgA_Plasma", "Neuts", "memB", "Plasmablasts", 
+  "EarlyPlasma_APC", "Teff", "Tcyto", "Th1_DC", "Tcm_DC", "Th1",
+  "Cytomono", "M1_mac", "APC_M1", "APC_M2Mac", "Act_M2Mac", 
+  "Tissue_Repair_M2Mac", "Lipid_macs", "organised_immune"
+)
+
+# Define cell type colors
+celltype_colors <- c(
+  # PLASMA/B CELLS
+  "IgM_Plasma" = "#00CED1", "IgA_Plasma" = "#00FFFF",
+  "Plasmablasts" = "#4682B4", "memB" = "#2F4F4F",
+  "EarlyPlasma_APC" = "#1E90FF",
+  
+  # T CELLS
+  "Teff" = "#9400D3", "Th1_DC" = "#EE82EE",
+  "Tcm_DC" = "#FF1493", "Th1" = "#C71585", "Tcyto" = "#7B68EE",
+  
+  # MACROPHAGES
+  "Cytomono" = "#00008B", "M1_mac" = "darkred", "APC_M1" = "#FFD700",
+  "APC_M2Mac" = "#D2691E", "Act_M2Mac" = "#CD853F",
+  "Tissue_Repair_M2Mac" = "#DEB887", "Lipid_macs" = "#FF6347",
+  
+  # NEUTROPHILS
+  "Neuts" = "#00FF7F",
+  
+  # IMMUNE COMPLEX
+  "organised_immune" = "#ADFF2F",
+  
+  # KERATINOCYTES
+  "BasalKer" = "#FDBF6F", "inf_BasalKer" = "#F0FFF0",
+  "SuprabasalKer" = "#CAB2D6", "inf_SupraBasal" = "#808000",
+  "TopKer" = "#A6CEE3", "inf_TopKer" = "#87CEEB",
+  "LC_Basal" = "#FB9A99",
+  
+  # STROMAL
+  "Sebaceous" = "#FFC0CB", "Eccrine" = "#B2DF8A",
+  "muscle" = "#E6E6FA", "Schwann" = "#FFA07A", "Endo" = "#FFF0F5",
+  
+  # FIBROBLASTS
+  "Fib1" = "#FFE4B5", "Fib2" = "#FFFACD", "fib3" = "#D3D3D3",
+  
+  # MIXED/OTHER
+  "RBC_mac_Tc" = "#808080"
+)
+
+# Define patient colors (consistent with previous figures)
+patient_colors <- c(
+  "P1_L" = "#F8766D", 
+  "P2_L" = "#A3A500", 
+  "P3_L" = "#00BF7D", 
+  "P4_L" = "#00B0F6", 
+  "P6_L" = "#E76BF3"
+)
+
+# Set up P6_L comparison
+integrated_Eth_cohort_filteredL$P6L_group <- ifelse(
+  integrated_Eth_cohort_filteredL$sample_id == "P6_L",
+  "P6_L",
+  "Other_Patients"
+)
+
+cat("\n=== Patient Grouping ===\n")
+print(table(integrated_Eth_cohort_filteredL$P6L_group))
+
+Idents(integrated_Eth_cohort_filteredL) <- "P6L_group"
+```
+
+# ============================================
+# DIFFERENTIAL EXPRESSION: P6_L vs OTHERS
+# ============================================
+```{r DE_P6_vs_others}
+cat("\n=== Running DE: P6_L vs Other Patients ===\n")
+
+p6_vs_others_DE <- FindMarkers(
+  integrated_Eth_cohort_filteredL,
+  ident.1 = "P6_L",
+  ident.2 = "Other_Patients",
+  min.pct = 0.25,          
+  logfc.threshold = 0.5,
+  test.use = "wilcox",
+  verbose = TRUE
+)
+
+# Add gene names
+p6_vs_others_DE$gene <- rownames(p6_vs_others_DE)
+
+# Filter significant
+p6_vs_others_sig <- p6_vs_others_DE %>%
+  filter(p_val_adj < 0.05) %>%
+  arrange(desc(abs(avg_log2FC)))
+
+cat("\n=== P6_L vs Others: Significant DEGs ===\n")
+cat("Total significant DEGs (p_adj<0.05):", nrow(p6_vs_others_sig), "\n")
+cat("Upregulated in P6_L:", sum(p6_vs_others_sig$avg_log2FC > 0), "\n")
+cat("Downregulated in P6_L:", sum(p6_vs_others_sig$avg_log2FC < 0), "\n")
+
+# Save results
+write.csv(p6_vs_others_sig, 
+          paste0(save_pathP6, "P6_vs_Others_DEGs_significant.csv"),
+          row.names = FALSE)
+
+cat("DE analysis complete\n")
+```
+
+# ============================================
+# FIGURE 8A: Heatmap P6_L vs Others
+# ============================================
+```{r figure_8A}
+cat("\n=== FIGURE 8A: Heatmap Top 50 DEGs ===\n")
+
+# Select top 25 up and top 25 down
+top_up <- p6_vs_others_sig %>%
+  filter(avg_log2FC > 0.5) %>%
+  arrange(desc(avg_log2FC)) %>%
+  head(25)
+
+top_down <- p6_vs_others_sig %>%
+  filter(avg_log2FC < -0.5) %>%
+  arrange(avg_log2FC) %>%
+  head(25)
+
+top_genes <- rbind(top_up, top_down)
+top_genes_p6 <- rownames(top_genes)
+
+# Scale data
+integrated_Eth_cohort_filteredL <- ScaleData(
+  integrated_Eth_cohort_filteredL, 
+  features = top_genes_p6
+)
+
+mat_p6 <- GetAssayData(
+  integrated_Eth_cohort_filteredL, 
+  slot = "scale.data"
+)[top_genes_p6, ]
+
+# Column annotation
+col_anno_p6 <- HeatmapAnnotation(
+  Patient = integrated_Eth_cohort_filteredL$sample_id,
+  Comparison = integrated_Eth_cohort_filteredL$P6L_group,
+  col = list(
+    Patient = patient_colors,
+    Comparison = c(
+      "P6_L" = "#E76BF3", 
+      "Other_Patients" = "gray80"
+    )
+  ),
+  annotation_name_gp = gpar(fontsize = 10, fontface = "bold")
+)
+
+# Create heatmap
+pdf(paste0(save_pathP6, "8_A_P6_vs_Others_Heatmap_Top50.pdf"), 
+    width = 14, height = 14)
+
+ht_p6 <- Heatmap(
+  mat_p6,
+  name = "Scaled\nExpression",
+  col = colorRamp2(c(0, 2), c("white", "red")),
+  top_annotation = col_anno_p6,
+  show_column_names = FALSE,
+  show_row_names = TRUE,
+  row_names_gp = gpar(fontsize = 7),
+  row_names_side = "right",
+  cluster_columns = TRUE,
+  cluster_rows = TRUE,
+  column_split = integrated_Eth_cohort_filteredL$P6L_group,
+  row_split = 6,
+  column_title = "P6_L vs Other Patients: Top 50 DEGs",
+  column_title_gp = gpar(fontsize = 14, fontface = "bold"),
+  border = TRUE
+)
+
+draw(ht_p6, heatmap_legend_side = "right", annotation_legend_side = "right")
+dev.off()
+
+cat("Figure 8A complete: Heatmap saved\n")
+```
+
+# ============================================
+# KERATINOCYTE ENRICHMENT ANALYSIS
+# ============================================
+```{r keratinocyte_enrichment}
+cat("\n=== KERATINOCYTE ENRICHMENT ANALYSIS ===\n")
+
+# Define keratinocyte cell types
+keratinocyte_celltypes <- c(
+  "BasalKer", "inf_BasalKer", "SuprabasalKer",
+  "inf_SupraBasal", "TopKer", "inf_TopKer", "LC_Basal"
+)
+
+# Extract metadata
+meta_all_patients <- integrated_Eth_cohort_filteredL@meta.data %>%
+  select(sample_id, all_of(keratinocyte_celltypes))
+
+# Calculate mean proportions per patient
+ker_by_patient <- meta_all_patients %>%
+  group_by(sample_id) %>%
+  summarise(across(all_of(keratinocyte_celltypes), mean, na.rm = TRUE)) %>%
+  pivot_longer(cols = -sample_id, 
+               names_to = "celltype", 
+               values_to = "mean_proportion")
+
+# Pivot to matrix
+ker_patient_matrix <- ker_by_patient %>%
+  pivot_wider(names_from = sample_id, 
+              values_from = mean_proportion) %>%
+  column_to_rownames("celltype") %>%
+  as.matrix()
+
+# Reorder columns
+col_order <- c("P1_L", "P2_L", "P3_L", "P4_L", "P6_L")
+ker_patient_matrix <- ker_patient_matrix[, col_order]
+
+write.csv(ker_patient_matrix,
+          paste0(save_pathP6, "Keratinocyte_Proportions_AllPatients.csv"))
+
+cat("Keratinocyte proportions calculated\n")
+```
+
+# ============================================
+# FIGURE 8B: Keratinocyte Heatmap
+# ============================================
+```{r figure_8B}
+cat("\n=== FIGURE 8B: Keratinocyte Enrichment Heatmap ===\n")
+
+# Column annotation
+col_ha_ker <- HeatmapAnnotation(
+  Patient = colnames(ker_patient_matrix),
+  col = list(Patient = patient_colors),
+  show_annotation_name = FALSE,
+  annotation_name_gp = gpar(fontsize = 10, fontface = "bold")
+)
+
+# Color function
+col_fun_ker <- colorRamp2(
+  c(0, max(ker_patient_matrix) / 2, max(ker_patient_matrix)),
+  c("white", "#FEB24C", "#B2182B")
+)
+
+pdf(paste0(save_pathP6, "8_B_Keratinocyte_Heatmap_AllPatients.pdf"),
+    width = 8, height = 7)
+
+ht_ker <- Heatmap(
+  ker_patient_matrix,
+  name = "Enrichment\nScore",
+  col = col_fun_ker,
+  cluster_rows = TRUE,
+  cluster_columns = FALSE,
+  show_row_names = TRUE,
+  show_column_names = TRUE,
+  row_names_gp = gpar(fontsize = 11, fontface = "bold"),
+  column_names_gp = gpar(fontsize = 11, fontface = "bold"),
+  row_names_side = "left",
+  top_annotation = col_ha_ker,
+  column_title = "Keratinocyte Sub-population Enrichment Across Patients",
+  column_title_gp = gpar(fontsize = 13, fontface = "bold"),
+  cell_fun = function(j, i, x, y, width, height, fill) {
+    if (colnames(ker_patient_matrix)[j] == "P6_L") {
+      grid.rect(x, y, width, height, 
+                gp = gpar(col = "#E76BF3", lwd = 3, fill = NA))
+    }
+    grid.text(sprintf("%.3f", ker_patient_matrix[i, j]), 
+              x, y, gp = gpar(fontsize = 9, fontface = "bold"))
+  },
+  border = TRUE
+)
+
+draw(ht_ker, heatmap_legend_side = "right", annotation_legend_side = "right")
+dev.off()
+
+cat("Figure 8B complete: Keratinocyte heatmap saved\n")
+```
+
+# ============================================
+# FIGURE 8C: Inflamed Keratinocyte Ratio
+# ============================================
+```{r figure_8C}
+cat("\n=== FIGURE 8C: Inflamed Keratinocyte Ratio ===\n")
+
+# Calculate inflamed vs non-inflamed
+inflamed_comparison <- meta_all_patients %>%
+  mutate(
+    inflamed = inf_BasalKer + inf_SupraBasal + inf_TopKer,
+    non_inflamed = BasalKer + SuprabasalKer + TopKer,
+    ratio_inflamed = inflamed / (inflamed + non_inflamed + 1e-10)
+  ) %>%
+  group_by(sample_id) %>%
+  summarise(
+    mean_inflamed = mean(inflamed, na.rm = TRUE),
+    mean_non_inflamed = mean(non_inflamed, na.rm = TRUE),
+    mean_ratio = mean(ratio_inflamed, na.rm = TRUE)
+  )
+
+# Barplot
+p_inflam_ratio <- ggplot(inflamed_comparison, 
+                         aes(x = reorder(sample_id, mean_ratio), 
+                             y = mean_ratio,
+                             fill = sample_id)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_fill_manual(values = patient_colors) +
+  geom_text(aes(label = sprintf("%.2f", mean_ratio)), 
+            vjust = -0.5, size = 5, fontface = "bold") +
+  labs(
+    title = "Inflamed Keratinocyte Ratio by Patient",
+    subtitle = "Ratio = Inflamed / (Inflamed + Non-inflamed)",
+    x = "Patient",
+    y = "Inflamed Keratinocyte Ratio"
+  ) +
+  theme_classic() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+    plot.subtitle = element_text(size = 11, hjust = 0.5),
+    axis.text.x = element_text(size = 12, face = "bold"),
+    axis.title = element_text(size = 12, face = "bold"),
+    legend.position = "none"
+  ) +
+  ylim(0, max(inflamed_comparison$mean_ratio) * 1.15)
+
+ggsave(paste0(save_pathP6, "8_C_Keratinocyte_InflammedRatio.pdf"),
+       p_inflam_ratio, width = 8, height = 6)
+
+cat("Figure 8C complete: Inflamed ratio barplot saved\n")
+```
+
+# ============================================
+# KERATINOCYTE STATISTICS
+# ============================================
+```{r keratinocyte_stats}
+cat("\n=== Statistical Testing: Keratinocyte Enrichment ===\n")
+
+# Reshape for statistics
+ker_for_stats <- meta_all_patients %>%
+  mutate(patient_group = ifelse(sample_id == "P6_L", "P6_L", "Others")) %>%
+  pivot_longer(cols = all_of(keratinocyte_celltypes),
+               names_to = "celltype",
+               values_to = "proportion")
+
+# Wilcoxon test for each keratinocyte subtype
+ker_enrichment_stats <- data.frame()
+
+for (ct in keratinocyte_celltypes) {
+  ct_data <- ker_for_stats %>% filter(celltype == ct)
+  
+  p6_values <- ct_data %>% filter(patient_group == "P6_L") %>% pull(proportion)
+  other_values <- ct_data %>% filter(patient_group == "Others") %>% pull(proportion)
+  
+  wt <- wilcox.test(p6_values, other_values)
+  
+  ker_enrichment_stats <- rbind(
+    ker_enrichment_stats,
+    data.frame(
+      celltype = ct,
+      p6_mean = mean(p6_values, na.rm = TRUE),
+      p6_median = median(p6_values, na.rm = TRUE),
+      others_mean = mean(other_values, na.rm = TRUE),
+      others_median = median(other_values, na.rm = TRUE),
+      fold_change = mean(p6_values, na.rm = TRUE) / mean(other_values, na.rm = TRUE),
+      p_value = wt$p.value
+    )
+  )
+}
+
+ker_enrichment_stats$p_adj <- p.adjust(ker_enrichment_stats$p_value, method = "BH")
+
+cat("\n=== Keratinocyte Enrichment Results ===\n")
+print(ker_enrichment_stats %>% arrange(p_adj))
+
+# This will be saved as S_Table_5 at the end
+cat("Keratinocyte statistics calculated\n")
+```
+
+# ============================================
+# IMPORT P6 EPIDERMIS ANNOTATIONS
+# ============================================
+```{r import_epidermis_annotations}
+cat("\n=== IMPORTING P6 EPIDERMIS ANNOTATIONS ===\n")
+
+# Import annotations
+p6_H_epi_annotation <- read.csv(p6_h_epi_csv)
+p6_L_epi_annotation <- read.csv(p6_l_epi_csv)
+p6_L_ker_subclass_anno <- read.csv(p6_l_subclass_csv)
+
+cat("P6_H epidermis:", sum(p6_H_epi_annotation$Keratinocytes == "epidermis"), "spots\n")
+cat("P6_L total keratinocytes:", sum(p6_L_epi_annotation$All_Keratinocyte != ""), "spots\n")
+cat("P6_L subclasses:\n")
+print(table(p6_L_ker_subclass_anno$Keratinocyte.subclass))
+
+# Prepare P6_H annotations
+p6h_epi_barcodes <- p6_H_epi_annotation %>%
+  filter(Keratinocytes == "epidermis") %>%
+  mutate(
+    epidermis_type = "Normal",
+    sample_id = "P6_H"
+  ) %>%
+  select(Barcode, epidermis_type, sample_id)
+
+# Prepare P6_L annotations
+p6l_epi_barcodes <- p6_L_epi_annotation %>%
+  filter(All_Keratinocyte != "") %>%
+  mutate(
+    epidermis_type = "Acanthotic",
+    sample_id = "P6_L",
+    epi_region = All_Keratinocyte
+  ) %>%
+  select(Barcode, epidermis_type, sample_id, epi_region)
+
+# Add subclass information
+p6l_subclass <- p6_L_ker_subclass_anno %>%
+  filter(Keratinocyte.subclass != "") %>%
+  select(Barcode, epi_subtype = Keratinocyte.subclass)
+
+p6l_epi_barcodes <- p6l_epi_barcodes %>%
+  left_join(p6l_subclass, by = "Barcode")
+
+cat("P6_L epidermis:", nrow(p6l_epi_barcodes), "spots\n")
+
+# Subset P6 samples from combined object
+p6_comparison <- subset(integrated_Eth_cohort_filtered,
+                        subset = sample_id %in% c("P6_L", "P6_H"))
+
+cat("\n=== P6 Comparison Subset ===\n")
+cat("Total spots:", ncol(p6_comparison), "\n")
+print(table(p6_comparison$sample_id))
+
+# Combine annotations
+all_epi_barcodes <- bind_rows(
+  p6h_epi_barcodes %>% select(Barcode, epidermis_type, sample_id),
+  p6l_epi_barcodes %>% select(Barcode, epidermis_type, sample_id)
+)
+
+# Match barcode format
+p6_spot_ids <- colnames(p6_comparison)
+
+if (grepl("-1$", p6_spot_ids[1]) && grepl("-1$", all_epi_barcodes$Barcode[1])) {
+  all_epi_barcodes$Barcode_full <- all_epi_barcodes$Barcode
+} else if (grepl("_\\d+$", p6_spot_ids[1]) && !grepl("_\\d+$", all_epi_barcodes$Barcode[1])) {
+  all_epi_barcodes <- all_epi_barcodes %>%
+    mutate(
+      Barcode_full = case_when(
+        sample_id == "P6_L" ~ paste0(Barcode, "_10"),
+        sample_id == "P6_H" ~ paste0(Barcode, "_9"),
+        TRUE ~ Barcode
+      )
+    )
+} else {
+  all_epi_barcodes$Barcode_full <- all_epi_barcodes$Barcode
+}
+
+# Filter to epidermal spots
+epi_spots_keep <- all_epi_barcodes$Barcode_full[all_epi_barcodes$Barcode_full %in% colnames(p6_comparison)]
+
+p6_epi <- p6_comparison[, epi_spots_keep]
+p6_epi$epidermis_type <- all_epi_barcodes$epidermis_type[match(colnames(p6_epi), all_epi_barcodes$Barcode_full)]
+
+cat("\n=== P6 Epidermis Object ===\n")
+cat("Total epidermal spots:", ncol(p6_epi), "\n")
+print(table(p6_epi$epidermis_type, p6_epi$sample_id))
+
+# Add P6_L subtype info
+p6l_spots <- colnames(p6_epi)[p6_epi$sample_id == "P6_L"]
+p6_epi$epi_subtype <- NA
+
+for (i in 1:nrow(p6l_epi_barcodes)) {
+  bc_full <- if ("Barcode_full" %in% colnames(p6l_epi_barcodes)) {
+    p6l_epi_barcodes$Barcode_full[i]
+  } else {
+    paste0(p6l_epi_barcodes$Barcode[i], "_10")
+  }
+  
+  if (bc_full %in% colnames(p6_epi) && !is.na(p6l_epi_barcodes$epi_subtype[i])) {
+    p6_epi$epi_subtype[colnames(p6_epi) == bc_full] <- p6l_epi_barcodes$epi_subtype[i]
+  }
+}
+
+cat("Annotations imported successfully\n")
+```
+
+# ============================================
+# FIGURE 8D: Spatial P6_L vs P6_H Epidermis
+# ============================================
+```{r figure_8D}
+cat("\n=== FIGURE 8D: Spatial Epidermis Annotation ===\n")
+
+p1_h_spatial <- SpatialDimPlot(
+  p6_epi,
+  group.by = "epidermis_type",
+  images = "Eth_391_7_2", 
+  pt.size.factor = 1.5,
+  crop = FALSE,
+  cols = c("Acanthotic" = "#E64B35", "Normal" = "#4DBBD5"),
+  alpha = 0.8
+) +
+  labs(title = "P6_H: Normal Epidermis")
+
+p1_l_spatial <- SpatialDimPlot(
+  p6_epi,
+  group.by = "epidermis_type",
+  images = "Eth_391_7_4", 
+  pt.size.factor = 1.5,
+  crop = FALSE,
+  cols = c("Acanthotic" = "#E64B35", "Normal" = "#4DBBD5"),
+  alpha = 0.8
+) +
+  labs(title = "P6_L: Acanthotic Epidermis")
+
+p_spatial <- p1_h_spatial + p1_l_spatial
+
+ggsave(paste0(save_pathP6, "8_D_Spatial_P6_Epidermis_LvsH_Annotated.pdf"),
+       p_spatial, width = 14, height = 7)
+
+cat("Figure 8D complete: Spatial plots saved\n")
+```
+
+# ============================================
+# DIFFERENTIAL EXPRESSION: ACANTHOTIC vs NORMAL
+# ============================================
+```{r DE_acanthotic_vs_normal}
+cat("\n=== DE: Acanthotic vs Normal Epidermis ===\n")
+
+Idents(p6_epi) <- "epidermis_type"
+p6_epi <- PrepSCTFindMarkers(p6_epi)
+
+acanthotic_vs_normal <- FindMarkers(
+  p6_epi,
+  ident.1 = "Acanthotic",
+  ident.2 = "Normal",
+  min.pct = 0.25,
+  logfc.threshold = 0.5,
+  test.use = "wilcox"
+)
+
+acanthotic_vs_normal$gene <- rownames(acanthotic_vs_normal)
+
+acanthotic_vs_normal_sig <- acanthotic_vs_normal %>%
+  filter(p_val_adj < 0.05) %>%
+  arrange(desc(abs(avg_log2FC)))
+
+cat("\n=== DEG Summary ===\n")
+cat("Total DEGs (p_adj<0.05):", nrow(acanthotic_vs_normal_sig), "\n")
+cat("Upregulated in Acanthotic:", sum(acanthotic_vs_normal_sig$avg_log2FC > 0), "\n")
+cat("Downregulated in Acanthotic:", sum(acanthotic_vs_normal_sig$avg_log2FC < 0), "\n")
+
+cat("DE analysis complete\n")
+```
+
+# ============================================
+# FIGURE 8E: Dotplot Acanthotic vs Normal
+# ============================================
+```{r figure_8E}
+cat("\n=== FIGURE 8E: Dotplot Acanthotic Markers ===\n")
+
+# Define gene categories
+genes_by_category <- list(
+  "Immune/Interferon" = c("IGHJ6", "IGHG1", "IFI6", "S100A9", "S100A8", "S100A7",
+                        "IFI44L", "ISG15", "RSAD2", "GBP5", "TYMP", "WARS",
+                        "CCL5", "CXCL9", "BST2", "JCHAIN", "C1QB"),
+
+  "Stress/Inflammation" = c("KRT16", "KRT6B", "SPRR2A", "S100A7A", "RHCG",
+                                 "PI3", "FAM83A", "SPRR1B"),
+
+  "Keratinization" = c("KRT77", "KRT2", "KRT15", "SCEL", "LCE5A",
+                                  "KRT31", "SOSTDC1"),
+
+  "Dysfunction" = c("CCL27", "LIF", "POSTN", "HS3ST6", "CRIP1",
+                           "WNT2B"),
+
+  "Cell migration" = c("MMP1", "MMP3", "TNXB", "LAMB4")
+)
+
+p_scpubr_dotplot <- SCpubr::do_DotPlot(
+  sample = p6_epi,
+  features = genes_by_category,
+  cluster = FALSE,
+  plot.caption.face = "italic",
+  flip = TRUE
+)
+
+ggsave(paste0(save_pathP6, "8_E_P6_Acanthotic_DotPlot.pdf"),
+       p_scpubr_dotplot, width = 10, height = 16)
+
+cat("Figure 8E complete: Dotplot saved\n")
+```
+
+# ============================================
+# ANNOTATE ACANTHOTIC DE GENES
+# ============================================
+```{r annotate_acanthotic_genes}
+cat("\n=== Annotating Acanthotic DE Genes ===\n")
+
+# Create category lookup
+gene_categories <- list(
+  "Immune/Interferon" = c("IGHJ6", "IGHG1", "IFI6", "S100A9", "S100A8", "S100A7",
+                          "IFI44L", "ISG15", "RSAD2", "GBP5", "TYMP", "WARS",
+                          "CCL5", "CXCL9", "BST2", "JCHAIN", "C1QB"),
+  
+  "Stress/Inflammation" = c("KRT16", "KRT6B", "SPRR2A", "S100A7A", "RHCG", 
+                            "PI3", "FAM83A", "SPRR1B"),
+  
+  "Keratinization" = c("KRT77", "KRT2", "KRT15", "SCEL", "LCE5A", 
+                       "KRT31", "SOSTDC1"),
+  
+  "Dysfunction" = c("CCL27", "LIF", "POSTN", "HS3ST6", "CRIP1", "WNT2B"),
+  
+  "Cell_migration" = c("MMP1", "MMP3", "TNXB", "LAMB4")
+)
+
+category_lookup <- data.frame(
+  gene = unlist(gene_categories),
+  category = rep(names(gene_categories), times = sapply(gene_categories, length)),
+  row.names = NULL
+)
+
+de_genes_annotated <- acanthotic_vs_normal_sig %>%
+  left_join(category_lookup, by = "gene") %>%
+  mutate(category = ifelse(is.na(category), "Other", category))
+
+cat("\n=== DE Genes by Category ===\n")
+print(table(de_genes_annotated$category, useNA = "ifany"))
+
+# This will be saved as S_Table_6 at the end
+cat("Acanthotic genes annotated\n")
+```
+
+# ============================================
+# P6_L EPIDERMIS SUBCLUSTERING
+# ============================================
+```{r P6L_epidermis_subclustering}
+cat("\n=== P6_L EPIDERMIS SUBCLUSTERING ===\n")
+
+# Subset P6_L from lesional object
+p6l_lesional <- subset(integrated_Eth_cohort_filteredL, subset = sample_id == "P6_L")
+
+cat("P6_L lesional spots:", ncol(p6l_lesional), "\n")
+
+# Import P6_L annotations
+p6l_annot <- p6_L_epi_annotation %>%
+  select(Barcode, epi_region = All_Keratinocyte) %>%
+  left_join(
+    p6_L_ker_subclass_anno %>% select(Barcode, epi_subtype = Keratinocyte.subclass),
+    by = "Barcode"
+  )
+
+# Add barcode suffix
+p6l_barcodes <- colnames(p6l_lesional)
+
+if (grepl("_10$", p6l_barcodes[1]) && !grepl("_10$", p6l_annot$Barcode[1])) {
+  p6l_annot$Barcode_full <- paste0(p6l_annot$Barcode, "_10")
+} else {
+  p6l_annot$Barcode_full <- p6l_annot$Barcode
+}
+
+# Add annotations
+p6l_lesional$epi_region <- NA
+p6l_lesional$epi_subtype <- NA
+p6l_lesional$is_epidermis <- "Non-Epidermis"
+
+for (i in 1:nrow(p6l_annot)) {
+  bc <- p6l_annot$Barcode_full[i]
+  
+  if (bc %in% colnames(p6l_lesional)) {
+    if (p6l_annot$epi_region[i] != "") {
+      p6l_lesional$epi_region[colnames(p6l_lesional) == bc] <- p6l_annot$epi_region[i]
+      p6l_lesional$is_epidermis[colnames(p6l_lesional) == bc] <- "Epidermis"
+    }
+    
+    if (!is.na(p6l_annot$epi_subtype[i]) && p6l_annot$epi_subtype[i] != "") {
+      p6l_lesional$epi_subtype[colnames(p6l_lesional) == bc] <- p6l_annot$epi_subtype[i]
+    }
+  }
+}
+
+cat("\n=== Annotation Summary ===\n")
+cat("Epidermis spots:", sum(p6l_lesional$is_epidermis == "Epidermis"), "\n")
+print(table(p6l_lesional$epi_subtype, useNA = "ifany"))
+
+# Subset to epidermis
+p6l_epidermis <- subset(p6l_lesional, subset = is_epidermis == "Epidermis")
+
+cat("Epidermal spots for subclustering:", ncol(p6l_epidermis), "\n")
+
+# Re-process
+p6l_epidermis <- FindVariableFeatures(p6l_epidermis, nfeatures = 2000)
+p6l_epidermis <- ScaleData(p6l_epidermis)
+p6l_epidermis <- RunPCA(p6l_epidermis, npcs = 30, verbose = FALSE)
+p6l_epidermis <- RunUMAP(p6l_epidermis, dims = 1:10, verbose = FALSE)
+p6l_epidermis <- FindNeighbors(p6l_epidermis, dims = 1:10, verbose = FALSE)
+
+# Clustering at resolution 0.8
+p6l_epidermis <- FindClusters(p6l_epidermis, resolution = 0.8, verbose = FALSE)
+
+cat("\n=== Clusters at resolution 0.8 ===\n")
+print(table(p6l_epidermis$SCT_snn_res.0.8))
+
+# Find markers
+epi_cluster_markers <- FindAllMarkers(
+  p6l_epidermis,
+  only.pos = TRUE,
+  min.pct = 0.25,
+  logfc.threshold = 0.5,
+  verbose = FALSE
+)
+
+epi_cluster_markers_sig <- epi_cluster_markers %>%
+  filter(p_val_adj < 0.05) %>%
+  arrange(cluster, desc(avg_log2FC))
+
+write.csv(epi_cluster_markers_sig, 
+          paste0(save_pathP6, "epi_cluster_markers_sig.csv"))
+
+cat("Subclustering complete\n")
+```
+
+# ============================================
+# ANNOTATE EPIDERMAL CLUSTERS
+# ============================================
+```{r annotate_clusters}
+cat("\n=== Annotating Epidermal Clusters ===\n")
+
+# Define cluster names
+cluster_names_final <- c(
+  "0" = "Inflamed_Keratinocytes",
+  "1" = "Fibrotic_Tissue",
+  "2" = "Innervated_Suprabasal",
+  "3" = "Rete_Ridge_Hyperplasia",
+  "4" = "Cornified_Layer",
+  "5" = "Metabolic"
+)
+
+# Get cluster IDs
+cluster_ids <- as.character(p6l_epidermis$SCT_snn_res.0.8)
+
+# Map to cluster names (removing names)
+cluster_labels <- cluster_names_final[cluster_ids]
+names(cluster_labels) <- NULL  # Remove names
+
+# Add to metadata
+p6l_epidermis$cluster_name <- cluster_labels
+
+p6l_epidermis$cluster_name <- factor(
+  p6l_epidermis$cluster_name,
+  levels = c("Rete_Ridge_Hyperplasia", "Inflamed_Keratinocytes", 
+            "Innervated_Suprabasal", "Cornified_Layer", 
+            "Fibrotic_Tissue", "Metabolic")
+)
+
+# Cluster colors
+cluster_colors <- c(
+  "Rete_Ridge_Hyperplasia" = "#E64B35",
+  "Inflamed_Keratinocytes" = "#F39B7F",
+  "Innervated_Suprabasal" = "#4DBBD5",
+  "Cornified_Layer" = "#8491B4",
+  "Fibrotic_Tissue" = "#00A087",
+  "Metabolic" = "#91D1C2"
+)
+
+Idents(p6l_epidermis) <- "cluster_name"
+
+cat("Clusters annotated\n")
+```
+
+# ============================================
+# FIGURE 8F: UMAP Epidermal Clusters
+# ============================================
+```{r figure_8F}
+cat("\n=== FIGURE 8F: UMAP Clusters ===\n")
+
+p_umap_final <- DimPlot(
+  p6l_epidermis,
+  reduction = "umap",
+  label = TRUE,
+  label.size = 4.5,
+  label.box = TRUE,
+  repel = TRUE,
+  pt.size = 2,
+  cols = cluster_colors
+) +
+  labs(title = "P6_L Epidermis: Unbiased Clustering") +
+  theme_void() +
+  theme(
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    legend.position = "right"
+  )
+
+ggsave(paste0(save_pathP6, "8_F_UMAP_Clusters.pdf"),
+       p_umap_final, width = 10, height = 8)
+
+cat("Figure 8F complete: UMAP saved\n")
+```
+
+# ============================================
+# FIGURE 8G: Spatial Epidermal Clusters
+# ============================================
+```{r figure_8G}
+cat("\n=== FIGURE 8G: Spatial Clusters ===\n")
+
+p_spatial_final <- SpatialDimPlot(
+  p6l_epidermis,
+  group.by = "cluster_name",
+  pt.size.factor = 4,
+  alpha = 0.9,
+  cols = cluster_colors, 
+  label = TRUE
+) +
+  labs(title = "P6_L: Epidermal Cluster Spatial Distribution") +
+  theme_void() +
+  theme(
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    legend.position = "right"
+  )
+
+ggsave(paste0(save_pathP6, "8_G_Spatial_Clusters.pdf"),
+       p_spatial_final, width = 11, height = 9)
+
+cat("Figure 8G complete: Spatial plot saved\n")
+```
+
+# ============================================
+# FIGURE 8H: Cell Type Enrichment by Cluster
+# ============================================
+```{r figure_8H}
+cat("\n=== FIGURE 8H: Cell Type Enrichment ===\n")
+
+# Get available cell types
+all_celltypes_available <- colnames(p6l_epidermis@meta.data)[
+  colnames(p6l_epidermis@meta.data) %in% celltypes
+]
+
+# Calculate enrichment
+celltype_enrichment <- p6l_epidermis@meta.data %>%
+  select(cluster_name, all_of(all_celltypes_available)) %>%
+  pivot_longer(cols = -cluster_name, names_to = "celltype", values_to = "proportion") %>%
+  group_by(cluster_name, celltype) %>%
+  summarise(mean_prop = mean(proportion, na.rm = TRUE), .groups = "drop")
+
+# Filter to >1% in at least one cluster
+celltype_max <- celltype_enrichment %>%
+  group_by(celltype) %>%
+  summarise(max_prop = max(mean_prop)) %>%
+  filter(max_prop > 0.01)
+
+celltype_enrichment_filtered <- celltype_enrichment %>%
+  filter(celltype %in% celltype_max$celltype)
+
+# Stacked barplot
+p_celltype_stacked <- ggplot(celltype_enrichment_filtered,
+                                 aes(x = cluster_name, y = mean_prop, fill = celltype)) +
+  geom_bar(stat = "identity", position = "stack", color = "black", size = 0.3) +
+  scale_fill_manual(values = celltype_colors, name = "Cell Type") +
+  labs(
+    title = "P6_L: Non-Keratinocyte Cell Infiltration by Cluster",
+    subtitle = "Mean proportion of immune and stromal cells",
+    x = "Epidermal Cluster",
+    y = "Mean Proportion"
+  ) +
+  theme_classic() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+    plot.subtitle = element_text(size = 11, hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 11, face = "bold"),
+    axis.title = element_text(size = 12, face = "bold"),
+    legend.position = "right"
+  )
+
+ggsave(paste0(save_pathP6, "8_H_CellType_Stacked.pdf"),
+       p_celltype_stacked, width = 4, height = 5)
+
+cat("Figure 8H complete: Cell type enrichment saved\n")
+```
+
+# ============================================
+# SUPPLEMENTARY FIGURE S7A: Dotplot Cluster Markers
+# ============================================
+```{r figure_S7A}
+cat("\n=== SUPPLEMENTARY FIGURE S7A: Cluster Markers Dotplot ===\n")
+
+# Define signature genes
+genes_curated <- list(
+  "Stress keratins" = c("S100A9", "S100A8", "KRT16", "IFITM3"),
+  
+  "Inflamed Keratinocytes" = c("CXCL8", "CEACAM1", "CCL5", "HLA-DQA1", 
+                                "MMP9", "LAMC2", "IL18BP", "IL1R2"),
+  
+  "Fibrotic Tissue" = c("COL1A1", "ACTA2", "VIM", "CCN2", "CD14", 
+                        "IGHA1", "THBS1", "C1QB"),
+  
+  "Innervated Suprabasal" = c("ZNF750", "PTGS1", "UNC5B", "EPHB6", 
+                              "VIPR1", "DLX5", "KRT2"),
+  
+  "Rete Ridge Hyperplasia" = c("MKI67", "PCNA", "AURKB", "CDK1", 
+                                "LGR4", "LTF", "MT1X", "HSPD1"),
+  
+  "Cornified Layer" = c("FLG", "LCE1A", "HRNR", "SPRR2B", "KPRP", 
+                        "IL37", "MAP1LC3A"),
+  
+  "Metabolic" = c("FYCO1", "KCNJ15", "DDX60", "AP1S1", "PLTP", 
+                  "HSD17B10", "AKR1B10")
+)
+
+# Filter to present genes
+genes_curated_filtered <- lapply(genes_curated, function(gene_vec) {
+  gene_vec[gene_vec %in% rownames(p6l_epidermis)]
+})
+
+genes_curated_filtered <- genes_curated_filtered[sapply(genes_curated_filtered, length) > 0]
+
+p_dotplot_final <- SCpubr::do_DotPlot(
+  sample = p6l_epidermis,
+  features = genes_curated_filtered,
+  flip = TRUE,
+  legend.position = "right",
+  plot.title = "P6_L Epidermis: Cluster Signature Genes",
+  font.size = 11,
+  dot.scale = 8
+)
+
+ggsave(paste0(save_pathP6, "S7_A_DotPlot_ClusterMarkers.pdf"),
+       p_dotplot_final, width = 12, height = 14)
+
+cat("Supplementary Figure S7A complete: Dotplot saved\n")
+```
+
+# ============================================
+# SUPPLEMENTARY FIGURE S7B: Spatial Pie Charts
+# ============================================
+```{r figure_S7B}
+cat("\n=== SUPPLEMENTARY FIGURE S7B: Spatial Visualizations ===\n")
+
+# Panel 1: Highlighted clusters
+pdf(paste0(save_pathP6, "S7_B_TOP_PANEL_Clusters_Highlighted.pdf"), 12, 10)
+
+cluster_spatial_plots <- SpatialDimPlot(
+  p6l_epidermis, 
+  cells.highlight = CellsByIdentities(
+    object = p6l_epidermis, 
+    idents = c("Rete_Ridge_Hyperplasia", "Inflamed_Keratinocytes", 
+               "Innervated_Suprabasal", "Cornified_Layer",
+               "Fibrotic_Tissue", "Metabolic")
+  ), 
+  facet.highlight = TRUE, 
+  ncol = 3, 
+  cols.highlight = cluster_colors, 
+  pt.size.factor = 5
+)
+
+print(cluster_spatial_plots)
+dev.off()
+
+# Panel 2: Scatterpie plots
+coords <- GetTissueCoordinates(p6l_epidermis)
+meta <- p6l_epidermis@meta.data
+spatial_data <- cbind(coords, meta)
+
+# Top 12 cell types
+top_celltypes <- spatial_data %>%
+  select(all_of(celltypes)) %>%
+  summarise(across(everything(), mean, na.rm = TRUE)) %>%
+  pivot_longer(everything(), names_to = "celltype", values_to = "mean_prop") %>%
+  arrange(desc(mean_prop)) %>%
+  head(12) %>%
+  pull(celltype)
+
+p_scatterpie_all <- ggplot() +
+  geom_scatterpie(
+    aes(x = x, y = y, group = cluster_name, r = 115),
+    data = spatial_data,
+    cols = top_celltypes,
+    alpha = 1.0
+  ) +
+  scale_fill_manual(
+    values = celltype_colors[top_celltypes],
+    name = "Cell Type"
+  ) +
+  facet_wrap(~cluster_name, ncol = 3) +
+  coord_equal() +
+  labs(
+    title = "P6_L Epidermis: Cell Type Composition by Cluster",
+    subtitle = "Each pie represents one spot"
+  ) +
+  theme_classic() +
+  theme(
+    plot.title = element_text(size = 14, hjust = 0.5),
+    plot.subtitle = element_text(size = 11, hjust = 0.5),
+    legend.position = "right",
+    strip.text = element_text(face = "bold", size = 10),
+    strip.background = element_rect(fill = "gray90"),
+    axis.title = element_blank()
+  )
+
+ggsave(paste0(save_pathP6, "S7_B_BOTTOM_PANEL_Scatterpie_AllClusters.pdf"),
+       p_scatterpie_all, width = 16, height = 12)
+
+cat("Supplementary Figure S7B complete: Both panels saved\n")
+```
+
+# ============================================
+# STATISTICAL TESTING: CELL TYPE ENRICHMENT
+# ============================================
+```{r celltype_enrichment_stats}
+cat("\n=== Statistical Testing: Cell Type Enrichment ===\n")
+
+# Spot-level data
+celltype_spot_level <- p6l_epidermis@meta.data %>%
+  select(cluster_name, all_of(all_celltypes_available)) %>%
+  pivot_longer(cols = -cluster_name, names_to = "celltype", values_to = "proportion")
+
+celltype_spot_level_filtered <- celltype_spot_level %>%
+  filter(celltype %in% celltype_max$celltype)
+
+# Statistical tests
+celltype_stats <- data.frame()
+
+for (ct in unique(celltype_spot_level_filtered$celltype)) {
+  
+  ct_data <- celltype_spot_level_filtered %>% 
+    filter(celltype == ct)
+  
+  kw_test <- kruskal.test(proportion ~ cluster_name, data = ct_data)
+  
+  if (kw_test$p.value < 0.05) {
+    
+    for (clust in levels(ct_data$cluster_name)) {
+      
+      in_cluster <- ct_data$proportion[ct_data$cluster_name == clust]
+      out_cluster <- ct_data$proportion[ct_data$cluster_name != clust]
+      
+      wt <- wilcox.test(in_cluster, out_cluster)
+      
+      n1 <- length(in_cluster)
+      n2 <- length(out_cluster)
+      U <- wt$statistic
+      r_rb <- 1 - (2*U) / (n1 * n2)
+      
+      celltype_stats <- rbind(
+        celltype_stats,
+        data.frame(
+          celltype = ct,
+          cluster = clust,
+          mean_in_cluster = mean(in_cluster, na.rm = TRUE),
+          mean_out_cluster = mean(out_cluster, na.rm = TRUE),
+          fold_change = mean(in_cluster, na.rm = TRUE) / (mean(out_cluster, na.rm = TRUE) + 1e-10),
+          p_value = wt$p.value,
+          effect_size = r_rb,
+          stringsAsFactors = FALSE
+        )
+      )
+    }
+  }
+}
+
+celltype_stats$p_adj <- p.adjust(celltype_stats$p_value, method = "BH")
+
+celltype_stats <- celltype_stats %>%
+  mutate(
+    significance = case_when(
+      p_adj < 0.001 ~ "***",
+      p_adj < 0.01 ~ "**",
+      p_adj < 0.05 ~ "*",
+      TRUE ~ "ns"
+    ),
+    enrichment_status = case_when(
+      p_adj < 0.05 & fold_change > 1.5 ~ "Enriched",
+      p_adj < 0.05 & fold_change < 0.67 ~ "Depleted",
+      TRUE ~ "Not significant"
+    )
+  )
+
+significant_enrichments <- celltype_stats %>%
+  filter(enrichment_status == "Enriched") %>%
+  arrange(cluster, desc(fold_change))
+
+cat("\n=== Significant Enrichments ===\n")
+cat("Total enrichments:", nrow(significant_enrichments), "\n")
+
+# This will be saved as S_Table_8 at the end
+cat("Cell type enrichment statistics calculated\n")
+```
+
+# ============================================
+# CREATE CLUSTER SUMMARY TABLE
+# ============================================
+```{r cluster_summary_table}
+cat("\n=== Creating Cluster Summary Table ===\n")
+
+# Define signature genes
+gene_mapping <- list(
+  "Inflamed_Keratinocytes" = c("CXCL8", "CEACAM1", "CCL5", "HLA-DQA1", 
+                               "MMP9", "LAMC2", "IL18BP", "IL1R2",
+                               "S100A9", "S100A8", "KRT16", "IFITM3"),
+  
+  "Fibrotic_Tissue" = c("COL1A1", "ACTA2", "VIM", "CCN2", "CD14", 
+                        "IGHA1", "THBS1", "C1QB"),
+  
+  "Innervated_Suprabasal" = c("ZNF750", "PTGS1", "UNC5B", "EPHB6", 
+                              "VIPR1", "DLX5", "KRT2"),
+  
+  "Rete_Ridge_Hyperplasia" = c("MKI67", "PCNA", "AURKB", "CDK1", 
+                               "LGR4", "LTF", "MT1X", "HSPD1"),
+  
+  "Cornified_Layer" = c("FLG", "LCE1A", "HRNR", "SPRR2B", "KPRP", 
+                        "IL37", "MAP1LC3A"),
+  
+  "Metabolic" = c("FYCO1", "KCNJ15", "DDX60", "AP1S1", "PLTP", 
+                  "HSD17B10", "AKR1B10")
+)
+
+# Create summary table
+cluster_info <- data.frame(
+  Cluster_Number = c("0", "1", "2", "3", "4", "5"),
+  Cluster_Name = c("Inflamed_Keratinocytes", "Fibrotic_Tissue", 
+                   "Innervated_Suprabasal", "Rete_Ridge_Hyperplasia",
+                   "Cornified_Layer", "Metabolic"),
+  Cluster_Description = c(
+    "Inflammatory keratinocytes with immune infiltration",
+    "Fibrotic tissue with ECM remodeling and immune cells",
+    "Suprabasal layer with neural innervation signatures",
+    "Hyperproliferative basal layer (rete ridges)",
+    "Terminally differentiated cornified envelope",
+    "Metabolically active keratinocytes"
+  ),
+  stringsAsFactors = FALSE
+)
+
+cluster_info$Signature_Genes <- sapply(cluster_info$Cluster_Name, function(name) {
+  genes <- gene_mapping[[name]]
+  genes_present <- genes[genes %in% rownames(p6l_epidermis)]
+  paste(genes_present, collapse = ", ")
+})
+
+cluster_info$N_Signature_Genes <- sapply(cluster_info$Cluster_Name, function(name) {
+  genes <- gene_mapping[[name]]
+  sum(genes %in% rownames(p6l_epidermis))
+})
+
+cluster_counts <- table(p6l_epidermis$cluster_name)
+cluster_info$N_Spots <- cluster_counts[match(cluster_info$Cluster_Name, names(cluster_counts))]
+
+cluster_table <- cluster_info %>%
+  select(Cluster_Number, Cluster_Name, N_Spots, Cluster_Description, 
+         N_Signature_Genes, Signature_Genes)
+
+# This will be saved as S_Table_7 at the end
+cat("Cluster summary table created\n")
+```
+
+# ============================================
+# SAVE SUPPLEMENTARY TABLES
+# ============================================
+```{r save_supplementary_tables}
+cat("\n=== SAVING SUPPLEMENTARY TABLES ===\n")
+
+# S_Table_5: Keratinocyte enrichment stats
+write.csv(ker_enrichment_stats,
+          paste0(save_pathP6, "S_Table_5_Keratinocyte_Stats_P6vsOthers.csv"),
+          row.names = FALSE)
+
+cat("S_Table_5 saved: Keratinocyte enrichment statistics\n")
+
+# S_Table_6: Acanthotic vs Normal DEGs
+write.csv(de_genes_annotated,
+          paste0(save_pathP6, "S_Table_6_Acanthotic_vs_Normal_DEGs_Annotated.csv"),
+          row.names = FALSE)
+
+cat("S_Table_6 saved: Acanthotic vs Normal DEGs\n")
+
+# S_Table_7: Cluster summary
+write.csv(cluster_table,
+          paste0(save_pathP6, "S_Table_7_P6L_Epidermis_Cluster_Summary.csv"),
+          row.names = FALSE)
+
+cat("S_Table_7 saved: Cluster summary table\n")
+
+# S_Table_8: Cell type enrichment statistics
+write.csv(significant_enrichments,
+          paste0(save_pathP6, "S_Table_8_Significant_CellType_Enrichments.csv"),
+          row.names = FALSE)
+
+cat("S_Table_8 saved: Cell type enrichment statistics\n")
+```
+

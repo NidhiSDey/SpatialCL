@@ -1,0 +1,772 @@
+---
+title: "P2_L Analysis - Figure 5 and Supplementary Figure S4"
+output: html_document
+date: "2025-11-30"
+---
+
+# ============================================
+# SETUP AND LIBRARIES
+# ============================================
+```{r setup, include=FALSE}
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+library(pheatmap)
+library(viridis)
+library(tidyr)
+library(ggpubr)
+library(rstatix)
+library(patchwork)
+library(ComplexHeatmap)
+library(circlize)
+library(scatterpie)
+
+# Define study parameters
+study_name <- "ethiopian4mm_cohort"
+study_path <- "F:/SD23.9.2_Dioraphte_Ethiopian_4mm_ND23.09/"
+
+# Define samples (removed patient 5 lesion and non lesional)
+samples <- c("392_1_2", "392_1_4", "393_3_2", "393_3_4", 
+             "391_4_2", "391_4_4", "392_5_2", "392_5_4",
+             "391_7_2", "391_7_4")
+
+sample_group <- rep(c("healthy", "lesion"), 5)
+
+
+# Define paths
+read_path <- paste0(study_path, "R/No_P5/")
+save_pathL <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_sep/lesion/iteration_nov2025/")
+save_path <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_comb/")
+
+# Create save directory for P2
+save_pathP2 <- paste0(save_pathL, "P2/test/")
+if(!dir.exists(save_pathP2)) {
+  dir.create(save_pathP2, recursive = TRUE)
+}
+```
+
+# ============================================
+# CUSTOM FUNCTIONS
+# ============================================
+```{r custom_functions}
+# Custom spatial visualization function with pie charts per spot
+create_custom_spatial_plot <- function(theta, pos, colors, title, topic_order, r = 50) {
+  library(ggplot2)
+  library(dplyr)
+  library(tidyr)
+  library(scatterpie)
+  
+  # Convert theta to dataframe and add position information
+  theta_df <- as.data.frame(theta)
+  theta_df$spot_id <- rownames(theta_df)
+  
+  pos_df <- as.data.frame(pos)
+  pos_df$spot_id <- rownames(pos_df)
+  
+  # Combine theta and position data
+  plot_data <- theta_df %>%
+    left_join(pos_df, by = "spot_id")
+  
+  # Get cell type columns (all columns except spot_id, x, y)
+  celltype_cols <- colnames(plot_data)[!colnames(plot_data) %in% c("spot_id", "x", "y")]
+  
+  # Order cell type columns according to topic_order
+  ordered_cols <- intersect(topic_order, celltype_cols)
+  
+  # Reorder columns in plot_data to match desired order
+  plot_data <- plot_data %>%
+    select(spot_id, x, y, all_of(ordered_cols))
+  
+  # Update celltype_cols to use ordered version
+  celltype_cols <- ordered_cols
+  
+  # Create ordered color palette matching the column order
+  ordered_colors <- colors[celltype_cols]
+  
+  # Create the plot with pie charts
+  p <- ggplot() +
+    geom_scatterpie(aes(x = x, y = y, r = r), 
+                    data = plot_data, 
+                    cols = celltype_cols,
+                    alpha = 0.8,
+                    color = NA) +
+    scale_fill_manual(values = ordered_colors, 
+                     breaks = celltype_cols,
+                     name = "Cell Types") +
+    theme_void() +
+    theme(
+      legend.position = "right",
+      legend.text = element_text(size = 8),
+      legend.title = element_text(size = 10, face = "bold"),
+      plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+      panel.background = element_rect(fill = "white", colour = "white"),
+      plot.background = element_rect(fill = "white", colour = "white")
+    ) +
+    labs(title = title) +
+    coord_fixed() +
+    guides(fill = guide_legend(override.aes = list(size = 3, alpha = 1)))
+  
+  return(p)
+}
+```
+
+# ============================================
+# LOAD DATA AND DEFINE COLORS
+# ============================================
+```{r load_data_and_setup}
+# Load lesion only integrated object (for P2_L vs other lesions comparison)
+integrated_Eth_cohort_filteredL <- readRDS(paste0(save_pathL, "Lesion_integrated_Eth_cohort_filtered_35stdeconvTopics_reclus_relabelled_COMBINED_dominantTopic_added.rds"))
+cat("Lesion-only object loaded:", ncol(integrated_Eth_cohort_filteredL), "spots\n")
+print(table(integrated_Eth_cohort_filteredL$sample_id))
+
+# Load lesion + non-lesion integrated object
+integrated_Eth_cohort_filtered <- readRDS(paste0(save_path, "Combined_integrated_Eth_cohort_obj_26top_domcell_added.rds"))
+cat("Combined object loaded:", ncol(integrated_Eth_cohort_filtered), "spots\n")
+print(table(integrated_Eth_cohort_filtered$sample_id))
+
+# Define cell types
+celltypes <- colnames(integrated_Eth_cohort_filteredL@meta.data)[69:103]
+
+# Define immune topics
+immune_topics <- c(
+  "IgM_Plasma", "IgA_Plasma", "Neuts", "memB", "Plasmablasts", 
+  "EarlyPlasma_APC", "Teff", "Tcyto", "Th1_DC", "Tcm_DC", "Th1",
+  "Cytomono", "M1_mac", "APC_M1", "APC_M2Mac", "Act_M2Mac", 
+  "Tissue_Repair_M2Mac", "Lipid_macs", "organised_immune"
+)
+
+# Define cell type colors
+celltype_colors <- c(
+  # PLASMA/B CELLS
+  "IgM_Plasma" = "#00CED1", "IgA_Plasma" = "#00FFFF",
+  "Plasmablasts" = "#4682B4", "memB" = "#2F4F4F",
+  "EarlyPlasma_APC" = "#1E90FF",
+  
+  # T CELLS
+  "Teff" = "#9400D3", "Th1_DC" = "#EE82EE",
+  "Tcm_DC" = "#FF1493", "Th1" = "#C71585", "Tcyto" = "#7B68EE",
+  
+  # MACROPHAGES
+  "Cytomono" = "#00008B", "M1_mac" = "darkred", "APC_M1" = "#FFD700",
+  "APC_M2Mac" = "#D2691E", "Act_M2Mac" = "#CD853F",
+  "Tissue_Repair_M2Mac" = "#DEB887", "Lipid_macs" = "#FF6347",
+  
+  # NEUTROPHILS
+  "Neuts" = "#00FF7F",
+  
+  # IMMUNE COMPLEX
+  "organised_immune" = "#ADFF2F",
+  
+  # KERATINOCYTES
+  "BasalKer" = "#FDBF6F", "inf_BasalKer" = "#F0FFF0",
+  "SuprabasalKer" = "#CAB2D6", "inf_SupraBasal" = "#808000",
+  "TopKer" = "#A6CEE3", "inf_TopKer" = "#87CEEB",
+  "LC_Basal" = "#FB9A99",
+  
+  # STROMAL
+  "Sebaceous" = "#FFC0CB", "Eccrine" = "#B2DF8A",
+  "muscle" = "#E6E6FA", "Schwann" = "#FFA07A", "Endo" = "#FFF0F5",
+  
+  # FIBROBLASTS
+  "Fib1" = "#FFE4B5", "Fib2" = "#FFFACD", "fib3" = "#D3D3D3",
+  
+  # MIXED/OTHER
+  "RBC_mac_Tc" = "#808080"
+)
+
+# Define patient colors (consistent throughout)
+patient_colors <- c(
+  "P1_L" = "#F8766D", 
+  "P2_L" = "#A3A500", 
+  "P3_L" = "#00BF7D", 
+  "P4_L" = "#00B0F6", 
+  "P6_L" = "#E76BF3"
+)
+
+# Create P2_L vs Others grouping
+integrated_Eth_cohort_filteredL$comparison_P2 <- ifelse(
+  integrated_Eth_cohort_filteredL$sample_id == "P2_L", 
+  "P2_L", 
+  "Others"
+)
+
+cat("\n=== Patient Grouping ===\n")
+print(table(integrated_Eth_cohort_filteredL$comparison_P2))
+```
+
+# ============================================
+# FIGURE 5A: Heatmap P2_L vs Others (Fibrotic Genes)
+# ============================================
+```{r figure_5A}
+cat("\n=== FIGURE 5A: Differential Expression Heatmap (P2_L vs Others) ===\n")
+
+# Set identity for DE
+Idents(integrated_Eth_cohort_filteredL) <- "comparison_P2"
+
+# Find markers for P2_L
+p2_markers <- FindMarkers(
+  integrated_Eth_cohort_filteredL,
+  ident.1 = "P2_L",
+  ident.2 = "Others",
+  min.pct = 0.25,
+  logfc.threshold = 0.5,
+  test.use = "wilcox"
+)
+
+# Add gene names
+p2_markers$gene <- rownames(p2_markers)
+
+# Filter and order
+p2_markers <- p2_markers %>%
+  filter(p_val_adj < 0.05) %>%
+  arrange(desc(avg_log2FC))
+
+# Save results
+write.csv(p2_markers, 
+          paste0(save_pathP2, "P2_vs_others_DEGs.csv"),
+          row.names = TRUE)
+
+# Get top 50 upregulated genes
+top_up_p2 <- p2_markers %>%
+  filter(avg_log2FC > 0) %>%
+  slice_max(order_by = avg_log2FC, n = 50) %>%
+  pull(gene)
+
+# Scale data
+integrated_Eth_cohort_filteredL <- ScaleData(integrated_Eth_cohort_filteredL, features = top_up_p2)
+mat_up_p2 <- GetAssayData(integrated_Eth_cohort_filteredL, slot = "scale.data")[top_up_p2, ]
+
+# Column annotation
+col_anno_p2 <- HeatmapAnnotation(
+  Patient = integrated_Eth_cohort_filteredL$sample_id,
+  Comparison = integrated_Eth_cohort_filteredL$comparison_P2,
+  col = list(
+    Patient = patient_colors,
+    Comparison = c("P2_L" = "#4DBBD5", "Others" = "gray80")
+  )
+)
+
+# Categorize genes for row annotation
+gene_category_p2 <- sapply(top_up_p2, function(gene) {
+  if (gene %in% grep("^COL[0-9]", top_up_p2, value = TRUE)) {
+    return("Collagen")
+  } else if (gene %in% c("FN1", "POSTN", "THBS2", "SPARC", "VCAN", "LUM", "DCN", "FBLN1", "FBLN2", "CTSK")) {
+    return("ECM")
+  } else if (gene %in% c("MMP2", "MMP9", "MMP11", "TIMP1", "TIMP2", "TIMP3")) {
+    return("MMP/TIMP")
+  } else if (gene %in% c("TGFB1", "TGFBI", "TGFBR2")) {
+    return("TGF-β")
+  } else if (gene %in% c("ACTA2", "TAGLN", "MYL9")) {
+    return("Myofibroblast")
+  } else if (gene %in% c("PDGFRB", "PDGFRA", "FAP", "LOX", "CTGF")) {
+    return("Fibrosis")
+  } else {
+    return("Keratinization/Other")
+  }
+})
+
+# Row annotation
+row_anno_p2 <- rowAnnotation(
+  Category = gene_category_p2,
+  col = list(
+    Category = c(
+      "Collagen" = "#E64B35",
+      "ECM" = "#4DBBD5",
+      "MMP/TIMP" = "#00A087",
+      "TGF-β" = "#3C5488",
+      "Myofibroblast" = "#F39B7F",
+      "Fibrosis" = "#8491B4",
+      "Keratinization/Other" = "gray80"
+    )
+  )
+)
+
+# Create heatmap
+ht_anno_p2 <- Heatmap(
+  mat_up_p2,
+  name = "Scaled\nExpression",
+  top_annotation = col_anno_p2,
+  right_annotation = row_anno_p2,
+  show_column_names = FALSE,
+  show_row_names = TRUE,
+  row_names_gp = gpar(fontsize = 8),
+  cluster_columns = TRUE,
+  cluster_rows = TRUE,
+  col = colorRamp2(c(0, 2), c("white", "red")),
+  column_split = integrated_Eth_cohort_filteredL$comparison_P2,
+  row_split = gene_category_p2,
+  border = TRUE,
+  column_title = "P2_L - Top 50 Upregulated Genes (Annotated)"
+)
+
+pdf(paste0(save_pathP2, "5_A_P2_annotated_heatmap.pdf"), width = 12, height = 12)
+draw(ht_anno_p2)
+dev.off()
+
+cat("Figure 5A complete: Annotated heatmap saved\n")
+```
+
+# ============================================
+# DEFINE FIBROTIC SIGNATURE
+# ============================================
+```{r define_fibrotic_signature}
+cat("\n=== Defining Fibrotic Signature Genes ===\n")
+
+# Define fibrotic signature genes from top upregulated genes in P2
+fibrotic_signature_genes <- c(
+  # Collagens
+  grep("^COL[0-9]", top_up_p2, value = TRUE),
+  
+  # Fibronectins
+  grep("^FN[0-9]?$", top_up_p2, value = TRUE),
+  
+  # Matrix Metalloproteinases
+  grep("^MMP[0-9]+$", top_up_p2, value = TRUE),
+  
+  # Tissue Inhibitors of Metalloproteinases
+  grep("^TIMP[0-9]$", top_up_p2, value = TRUE),
+  
+  # PDGF Receptors
+  grep("^PDGFR[AB]$", top_up_p2, value = TRUE),
+  
+  # Lysyl Oxidases
+  grep("^LOX", top_up_p2, value = TRUE),
+  
+  # Fibrillins
+  grep("^FBN[0-9]$", top_up_p2, value = TRUE),
+  
+  # Fibulins
+  grep("^FBLN[0-9]$", top_up_p2, value = TRUE),
+  
+  # Additional specific genes
+  c("POSTN", "SPARC", "VCAN", "THBS1", "THBS2", "THBS4", "LAMC1",
+    "TGFB1", "TGFB2", "TGFBI", "TGFBR1", "TGFBR2",
+    "ACTA2", "TAGLN", "MYL9", "MYLK", "CNN1",
+    "CTGF", "FAP", "COMP", "LUM", "DCN",
+    "BGN", "EMILIN1", "MFAP5", "LTBP1", "LTBP2")
+)
+
+# Remove duplicates and keep only genes present in data
+fibrotic_signature_genes <- unique(fibrotic_signature_genes)
+fibrotic_signature_genes <- fibrotic_signature_genes[fibrotic_signature_genes %in% top_up_p2]
+
+cat("Total fibrotic signature genes found:", length(fibrotic_signature_genes), "\n")
+print(fibrotic_signature_genes)
+
+# Create fibrotic score
+integrated_Eth_cohort_filteredL <- AddModuleScore(
+  integrated_Eth_cohort_filteredL,
+  features = list(fibrotic_signature_genes),
+  name = "Fibrotic_score"
+)
+
+cat("Fibrotic score added to object\n")
+```
+
+# ============================================
+# FIGURE 5C: UMAP Fibrotic Score
+# ============================================
+```{r figure_5C}
+cat("\n=== FIGURE 5C: UMAP Fibrotic Score ===\n")
+
+# UMAP of fibrotic score
+p_umap <- FeaturePlot(
+  integrated_Eth_cohort_filteredL, 
+  features = "Fibrotic_score1",
+  reduction = "umap", 
+  pt.size = 1.5,
+  order = TRUE,
+  min.cutoff = "q25",
+  max.cutoff = "q95"
+) + 
+  scale_color_gradientn(colors = c("lightgray", "yellow", "orange", "red", "darkred")) +
+  ggtitle("Fibrotic Score - UMAP")
+
+ggsave(paste0(save_pathP2, "5_C_Fibrotic_score_UMAP.pdf"), p_umap, width = 7, height = 6)
+
+# UMAP of signature genes (first 12)
+sig_umap <- FeaturePlot(
+  integrated_Eth_cohort_filteredL, 
+  features = fibrotic_signature_genes[1:12],
+  reduction = "umap", 
+  ncol = 3,
+  pt.size = 1.5,
+  order = TRUE,
+  combine = TRUE
+) & 
+  scale_color_gradientn(
+    colors = c("lightgray", "yellow", "orange", "red", "darkred"),
+    limits = c(0, 4)
+  )
+
+ggsave(paste0(save_pathP2, "5_C_Fibrotic_score_UMAP_SIGNATUREGENES.pdf"), 
+       sig_umap, width = 12, height = 12)
+
+cat("Figure 5C complete: UMAP plots saved\n")
+```
+
+# ============================================
+# FIGURE 5D: Boxplot Fibrotic Score Across Patients
+# ============================================
+```{r figure_5D}
+cat("\n=== FIGURE 5D: Fibrotic Score Comparison Across Patients ===\n")
+
+p <- SCpubr::do_BoxPlot(
+  sample = integrated_Eth_cohort_filteredL,
+  feature = "Fibrotic_score1",
+  group.by = "sample_id",
+  use_test = TRUE, 
+  colors.use = patient_colors,
+  comparisons = list(
+    c("P2_L", "P1_L"),
+    c("P2_L", "P3_L"),
+    c("P2_L", "P4_L"),
+    c("P2_L", "P6_L")
+  ),
+  map_signif_level = FALSE
+)
+
+ggsave(paste0(save_pathP2, "5_D_Fibrotic_score_boxplot.pdf"), 
+       p, width = 12, height = 8)
+
+cat("Figure 5D complete: Boxplot saved\n")
+```
+
+# ============================================
+# FIGURE 5E: Spatial Plot Fibrotic Score
+# ============================================
+```{r figure_5E}
+cat("\n=== FIGURE 5E: Spatial Distribution of Fibrotic Score ===\n")
+
+# Spatial - P2_L
+p_spatial_p2 <- SpatialFeaturePlot(
+  integrated_Eth_cohort_filteredL, 
+  features = "Fibrotic_score1",
+  images = "Eth_393_3_4",  # P2_L sample
+  pt.size.factor = 5,
+  min.cutoff = "q25",
+  max.cutoff = "q95",
+  alpha = c(0.8, 1)
+) +
+  scale_fill_gradientn(
+    colors = c("lightgray", "yellow", "orange", "red", "darkred"),
+    name = "Fibrotic\nScore"
+  ) +
+  ggtitle("P2_L - Fibrotic Score")
+
+ggsave(paste0(save_pathP2, "5_E_P2_spatial_fibrotic_score.pdf"), 
+       p_spatial_p2, width = 10, height = 8)
+
+cat("Figure 5E complete: Spatial plot saved\n")
+```
+
+# ============================================
+# FIGURE 5G: Scatter Pie Plot Cell Type Composition
+# ============================================
+```{r figure_5G}
+cat("\n=== FIGURE 5G: Cell Type Composition Scatter Pie Plot ===\n")
+
+# Subset P2_L only
+P2L_subset <- subset(integrated_Eth_cohort_filteredL, subset = patient == "P2")
+
+# Get spatial coordinates
+pos <- GetTissueCoordinates(P2L_subset)
+pos <- pos %>%
+  select(-cell) %>%
+  select(y, x)
+
+# Define topic columns
+topic_columns <- colnames(P2L_subset@meta.data)[69:103]
+
+# Extract theta matrix (proportions)
+P2_theta <- as.matrix(P2L_subset@meta.data[, topic_columns])
+rownames(P2_theta) <- colnames(P2L_subset)
+
+# Define topic order for legend
+topic_order <- topic_columns
+
+# Create the scatter pie plot
+p <- create_custom_spatial_plot(
+  theta = P2_theta,
+  pos = pos,
+  colors = celltype_colors,
+  title = "Cell Type Composition - P2_L",
+  topic_order = topic_order,
+  r = 110
+)
+
+ggsave(paste0(save_pathP2, "5_G_P2_L_scatterpie.pdf"), p, width = 12, height = 10)
+
+cat("Figure 5G complete: Scatter pie plot saved\n")
+```
+
+# ============================================
+# FIGURE 5H-I: Spatial Feature Plots Fibrotic Genes
+# ============================================
+```{r figure_5H_I}
+cat("\n=== FIGURE 5H-I: Spatial Distribution of Fibrotic Genes ===\n")
+
+# Create combined multi-panel figure (may span multiple pages)
+# Page 1: First 6 genes
+p1 <- SpatialFeaturePlot(
+  integrated_Eth_cohort_filteredL,
+  features = fibrotic_signature_genes[1:6],
+  images = "Eth_393_3_4",
+  pt.size.factor = 5,
+  ncol = 3,
+  keep.scale = "all"
+)
+
+ggsave(paste0(save_pathP2, "5_H_I_P2_spatial_fibrotic_genes_page1.pdf"), 
+       p1, width = 12, height = 10)
+
+# Page 2: Genes 7-12
+p2 <- SpatialFeaturePlot(
+  integrated_Eth_cohort_filteredL,
+  features = fibrotic_signature_genes[7:12],
+  images = "Eth_393_3_4",
+  pt.size.factor = 5,
+  ncol = 3,
+  keep.scale = "all"
+)
+
+ggsave(paste0(save_pathP2, "5_H_I_P2_spatial_fibrotic_genes_page2.pdf"), 
+       p2, width = 12, height = 10)
+
+# Page 3: Genes 13-18
+p3 <- SpatialFeaturePlot(
+  integrated_Eth_cohort_filteredL,
+  features = fibrotic_signature_genes[13:18],
+  images = "Eth_393_3_4",
+  pt.size.factor = 5,
+  ncol = 3,
+  keep.scale = "all"
+)
+
+ggsave(paste0(save_pathP2, "5_H_I_P2_spatial_fibrotic_genes_page3.pdf"), 
+       p3, width = 12, height = 10)
+
+cat("Figure 5H-I complete: Multi-panel spatial plots saved (3 pages)\n")
+```
+
+# ============================================
+# FIGURE 5J: Stacked Bar Chart Fibroblast Populations
+# ============================================
+```{r figure_5J}
+cat("\n=== FIGURE 5J: Fibroblast Population Distribution ===\n")
+
+# Prepare data for stacked bar chart
+fib_data <- integrated_Eth_cohort_filteredL@meta.data %>%
+  dplyr::select(sample_id, Fib1, Fib2, fib3) %>%
+  group_by(sample_id) %>%
+  summarise(
+    Fib1 = mean(Fib1),
+    Fib2 = mean(Fib2),
+    Fib3 = mean(fib3),
+    .groups = 'drop'
+  ) %>%
+  pivot_longer(cols = c(Fib1, Fib2, Fib3), 
+               names_to = "Fibroblast_Type", 
+               values_to = "Mean_Proportion")
+
+# Create highlight column
+fib_data$Highlight <- ifelse(fib_data$sample_id == "P2_L", "P2_L", "Others")
+
+# Stacked bar chart
+p_stacked <- ggplot(fib_data, aes(x = sample_id, y = Mean_Proportion, fill = Fibroblast_Type)) +
+  geom_bar(stat = "identity", color = "black", linewidth = 0.3) +
+  scale_fill_manual(
+    values = c(
+      "Fib1" = "#FFE4B5",
+      "Fib2" = "#FFFACD",
+      "Fib3" = "#D3D3D3"
+    ),
+    labels = c("Fib1", "Fib2", "Fib3")
+  ) +
+  labs(
+    x = "Patient",
+    y = "Mean Proportion",
+    fill = "Fibroblast\nPopulation",
+    title = "Fibroblast Population Distribution by Patient"
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12, face = "bold"),
+    axis.title = element_text(size = 14, face = "bold"),
+    legend.position = "right",
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold")
+  )
+
+ggsave(paste0(save_pathP2, "5_J_Fibroblast_populations_stacked_bar.pdf"), 
+       p_stacked, width = 8, height = 6)
+
+# Statistical comparison (for reference only, not plotted)
+fib_data_long <- integrated_Eth_cohort_filteredL@meta.data %>%
+  dplyr::select(sample_id, comparison_P2, Fib1, Fib2, fib3) %>%
+  pivot_longer(cols = c(Fib1, Fib2, fib3), 
+               names_to = "Fibroblast_Type", 
+               values_to = "Proportion")
+
+# Calculate statistics for each fibroblast type
+stat_tests <- fib_data_long %>%
+  group_by(Fibroblast_Type) %>%
+  wilcox_test(Proportion ~ comparison_P2) %>%
+  add_significance() %>%
+  add_xy_position(x = "Fibroblast_Type", dodge = 0.8)
+
+cat("\n=== Statistical Tests (Reference) ===\n")
+print(stat_tests)
+
+cat("Figure 5J complete: Stacked bar chart saved\n")
+```
+
+# ============================================
+# FIGURE 5K: Correlation Fibroblasts vs Fibrotic Score
+# ============================================
+```{r figure_5K}
+cat("\n=== FIGURE 5K: Fibroblast Populations vs Fibrotic Score Correlations ===\n")
+
+score_name <- "Fibrotic_score1"
+
+# Panel 1: Fib1 vs Fibrotic Score
+p_fib1 <- FeatureScatter(
+  integrated_Eth_cohort_filteredL,
+  feature1 = "Fib1",
+  feature2 = score_name,
+  group.by = "sample_id",
+  pt.size = 1.5,
+  cols = patient_colors
+) + ggtitle("Fib1 vs Fibrotic Score")
+
+# Get P2_L data for trendline
+p2_data_fib1 <- integrated_Eth_cohort_filteredL@meta.data %>%
+  filter(sample_id == "P2_L") %>%
+  dplyr::select(sample_id, Fib1, !!sym(score_name))
+
+cor_fib1 <- cor.test(p2_data_fib1$Fib1, 
+                     p2_data_fib1[[score_name]], 
+                     method = "spearman")
+
+p_fib1 <- p_fib1 + 
+  geom_smooth(data = p2_data_fib1,
+              aes(x = Fib1, y = .data[[score_name]]),
+              method = "lm", 
+              se = TRUE,
+              color = "#A3A500",
+              fill = "#A3A500",
+              alpha = 0.2,
+              linewidth = 1.5) +
+  annotate("text", 
+           x = max(integrated_Eth_cohort_filteredL$Fib1) * 0.6,
+           y = max(integrated_Eth_cohort_filteredL[[score_name]]) * 0.95,
+           label = paste0("P2_L:\nρ = ", round(cor_fib1$estimate, 3), 
+                         "\np = ", format.pval(cor_fib1$p.value, digits = 2)),
+           size = 4,
+           color = "#A3A500",
+           fontface = "bold")
+
+# Panel 2: Fib2 vs Fibrotic Score
+p_fib2 <- FeatureScatter(
+  integrated_Eth_cohort_filteredL,
+  feature1 = "Fib2",
+  feature2 = score_name,
+  group.by = "sample_id",
+  pt.size = 1.5,
+  cols = patient_colors
+) + ggtitle("Fib2 vs Fibrotic Score")
+
+p2_data_fib2 <- integrated_Eth_cohort_filteredL@meta.data %>%
+  filter(sample_id == "P2_L") %>%
+  dplyr::select(sample_id, Fib2, !!sym(score_name))
+
+cor_fib2 <- cor.test(p2_data_fib2$Fib2, 
+                     p2_data_fib2[[score_name]], 
+                     method = "spearman")
+
+p_fib2 <- p_fib2 + 
+  geom_smooth(data = p2_data_fib2,
+              aes(x = Fib2, y = .data[[score_name]]),
+              method = "lm", 
+              se = TRUE,
+              color = "#A3A500",
+              fill = "#A3A500",
+              alpha = 0.2,
+              linewidth = 1.5) +
+  annotate("text", 
+           x = max(integrated_Eth_cohort_filteredL$Fib2) * 0.6,
+           y = max(integrated_Eth_cohort_filteredL[[score_name]]) * 0.95,
+           label = paste0("P2_L:\nρ = ", round(cor_fib2$estimate, 3), 
+                         "\np = ", format.pval(cor_fib2$p.value, digits = 2)),
+           size = 4,
+           color = "#A3A500",
+           fontface = "bold")
+
+# Panel 3: Fib3 vs Fibrotic Score
+p_fib3 <- FeatureScatter(
+  integrated_Eth_cohort_filteredL,
+  feature1 = "fib3",
+  feature2 = score_name,
+  group.by = "sample_id",
+  pt.size = 1.5,
+  cols = patient_colors
+) + ggtitle("Fib3 vs Fibrotic Score")
+
+p2_data_fib3 <- integrated_Eth_cohort_filteredL@meta.data %>%
+  filter(sample_id == "P2_L") %>%
+  dplyr::select(sample_id, fib3, !!sym(score_name))
+
+cor_fib3 <- cor.test(p2_data_fib3$fib3, 
+                     p2_data_fib3[[score_name]], 
+                     method = "spearman")
+
+p_fib3 <- p_fib3 + 
+  geom_smooth(data = p2_data_fib3,
+              aes(x = fib3, y = .data[[score_name]]),
+              method = "lm", 
+              se = TRUE,
+              color = "#A3A500",
+              fill = "#A3A500",
+              alpha = 0.2,
+              linewidth = 1.5) +
+  annotate("text", 
+           x = max(integrated_Eth_cohort_filteredL$fib3) * 0.6,
+           y = max(integrated_Eth_cohort_filteredL[[score_name]]) * 0.95,
+           label = paste0("P2_L:\nρ = ", round(cor_fib3$estimate, 3), 
+                         "\np = ", format.pval(cor_fib3$p.value, digits = 2)),
+           size = 4,
+           color = "#A3A500",
+           fontface = "bold")
+
+# Combine plots horizontally
+p_combined_horizontal <- p_fib1 | p_fib2 | p_fib3
+
+ggsave(paste0(save_pathP2, "5_K_Fibroblast_vs_FibroticScore_correlations.pdf"), 
+       p_combined_horizontal, width = 18, height = 6)
+
+cat("Figure 5K complete: Correlation plots saved\n")
+cat("\nCorrelation statistics:\n")
+cat("Fib1: ρ =", round(cor_fib1$estimate, 3), ", p =", format.pval(cor_fib1$p.value), "\n")
+cat("Fib2: ρ =", round(cor_fib2$estimate, 3), ", p =", format.pval(cor_fib2$p.value), "\n")
+cat("Fib3: ρ =", round(cor_fib3$estimate, 3), ", p =", format.pval(cor_fib3$p.value), "\n")
+```
+
+# ============================================
+# SUPPLEMENTARY FIGURE S4A: Dotplot Fibrotic Genes
+# ============================================
+```{r figure_S4A}
+cat("\n=== SUPPLEMENTARY FIGURE S4A: Fibrotic Genes Expression Dotplot ===\n")
+
+p_dotplot <- DotPlot(integrated_Eth_cohort_filteredL, 
+                     features = fibrotic_signature_genes, 
+                     group.by = "sample_id",
+                     col.min = 0) +
+  coord_flip() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ggtitle("Fibrotic Genes by Patient")
+
+ggsave(paste0(save_pathP2, "S4_A_Fibrotic_genes_dotplot.pdf"), 
+       p_dotplot, width = 8, height = 6)
+
+cat("Supplementary Figure S4A complete: Dotplot saved\n")
+```
+
