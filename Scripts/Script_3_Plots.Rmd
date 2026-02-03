@@ -57,7 +57,7 @@ if(!dir.exists(save_pathL)) {
 }
 
 ###input rds
-integrated_Eth_cohort_filteredL <-readRDS(paste0(save_pathL, "Lesion_integrated_Eth_cohort_filtered_35stdeconvTopics_reclus_relabelled_COMBINED_dominantTopic_added.rds"))
+integrated_Eth_cohort_filteredL <-readRDS(paste0(save_pathL, "lesion_only_integrated_obj_35_LDA_topics_added.rds"))
 
 ###celltype colors for plotting
 # ============================================

@@ -4,7 +4,7 @@
 # ==============================================================================
 # This script generates all figures for the manuscript using the final
 # annotated Seurat object with clinical metadata
-# and uses "Eth4mm_renamed_res_addedabundances_pid_sampleid_tratio0.6dims1_15_cohort.rds" for this 
+# and uses "integrated_seurat_obj.Rds.rds" for this 
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
@@ -38,7 +38,7 @@ dims <- 15
 # ------------------------------------------------------------------------------
 
 integrated_Eth_cohort <- readRDS(
-  paste0(save_path, "Eth4mm_renamed_res_addedabundances_pid_sampleid_tratio0.6dims1_15_cohort.rds")
+  paste0(save_path, "integrated_seurat_obj.Rds")
 )
 
 # ------------x------------------------------------------------------------------

@@ -10,8 +10,8 @@ date: "2026-01-28"
 # ==============================================================================
 # This script performs Latent Dirichlet Allocation (LDA) topic modeling to
 # deconvolve cell types from lesion and non lesional samples
-# input: "Eth4mm_renamed_res_addedabundances_pid_sampleid_tratio0.6dims1_15_cohort.rds"
-# output: 1. lda file with 8-60 topics: "ldas_noKRTigG_allOD_k8to60_lesiononly.Rdata", 2. final Seurat obj with final selected (and combined) 23 topics added: integrated_Eth_cohort_filtered_23stdeconvTopics_labelled
+# input: "integrated_seurat_obj.Rds"
+# output: 1. lda file with 8-60 topics: "combined_lda_model_k8_60.Rdata", 2. final Seurat obj with final selected (and combined) 23 topics added: "integrated_seurat_obj_26_LDA_topics_added.rds"
 #code for S1E and Supplementary Table 2
 # ==============================================================================
 
@@ -79,7 +79,7 @@ if (!dir.exists(save_path)) {
 
 # Load integrated Seurat object with annotations
 integrated_Eth_cohort <- readRDS(
-  paste0(read_path, "Eth4mm_renamed_res_addedabundances_pid_sampleid_tratio0.6dims1_15_cohort.rds"))
+  paste0(read_path, "integrated_seurat_obj.Rds"))
 
 
 ```
@@ -342,7 +342,7 @@ ldas5 <- fitLDA(
 # Save LDA results
 saveRDS(
   ldas5, 
-  paste0(save_path, "ldas_noKRTigG_allOD_k8to60_lesiononly.Rdata")
+  paste0(save_path, "combined_lda_model_k8_60.Rdata")
 )
 
 cat("\nLDA models saved successfully!\n")
@@ -358,7 +358,7 @@ cat("\nLDA models saved successfully!\n")
 # Load Pre-fitted LDA Models (if needed)
 # ------------------------------------------------------------------------------
 
-ldas5 <- readRDS(paste0(save_path, "ldas_noKRTigG_allOD_k8to60_lesiononly.Rdata"))
+ldas5 <- readRDS(paste0(save_path, "combined_lda_model_k8_60.Rdata"))
 
 # ------------------------------------------------------------------------------
 # Select Optimal K
@@ -773,6 +773,7 @@ print(sort(rownames(deconGexp_combined)))
 cat("==================================================\n")
 
 ```
+
 ```{r}
 # ==============================================================================
 # EXTRACT TOP 40 GENES FOR COMBINED TOPICS and Supplementary Table 2
@@ -1086,8 +1087,7 @@ if (!dir.exists(save_path)) {
 }
 
 # Save integrated object with STdeconvolve results
-output_file <- paste0(save_path, "integrated_Eth_cohort_filtered_", 
-                      n_topics_combined, "stdeconvTopics_labelled.rds")
+output_file <- paste0(save_path, "integrated_seurat_obj_23_LDA_topics_added.rds")
 
 saveRDS(integrated_Eth_cohort_filtered, output_file)
 

@@ -65,7 +65,7 @@ cat("==================================================\n\n")
 
 # Load Seurat object with 23 combined STdeconvolve topics
 integrated_Eth_cohort_filtered <- readRDS(
-  paste0(read_path, "integrated_Eth_cohort_filtered_23stdeconvTopics_labelled.rds")
+  paste0(read_path, "integrated_seurat_obj_23_LDA_topics_added.rds")
 )
 
 cat("Seurat object loaded successfully\n")

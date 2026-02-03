@@ -11,8 +11,8 @@ date: "2025-11-17"
 # ==============================================================================
 # This script performs Latent Dirichlet Allocation (LDA) topic modeling to
 # deconvolve cell types from lesion samples
-# input: "Eth4mm_renamed_res_addedabundances_pid_sampleid_tratio0.6dims1_15_cohort.Rds"
-# output: 1. lda file with 26-52 topics: "lesion_26_52topics_stdeconv.rds", 2. final Seurat obj with final selected (and combined) 35 topics added: Lesion_integrated_Eth_cohort_filtered_35_stdeconvTopics_reclus_relabelled_COMBINED_dominantTopic_added.rds"
+# input: "integrated_seurat_obj.Rds"
+# output: 1. lda file with 26-52 topics: "lesion_LDA_model_k_26_52.rds", 2. final Seurat obj with final selected (and combined) 35 topics added: lesion_only_integrated_obj_35_LDA_topics_added.rds"
 #code for Figure 3,  S2 and Supplementary Table 2
 # ==============================================================================
 # Load required libraries
@@ -70,7 +70,7 @@ if(!dir.exists(save_pathL)) {
 ```{r Read integrated cohort data}
 # Read integrated cohort data
 integrated_Eth_cohort <- readRDS(paste0(read_path, 
-  "Eth4mm_renamed_res_addedabundances_pid_sampleid_tratio0.6dims1_15_cohort.Rds"))
+  "integrated_seurat_obj.Rds"))
 ```
 
 
@@ -232,8 +232,8 @@ cat("Final corpus dimensions:", dim(corpus), "\n")
 # 
 # # Save results
 # saveRDS(ldasl26_52, 
-#         paste0(save_pathL, "lesion_26_52topics_stdeconv.rds"))
-# cat("Results saved to:", paste0(save_pathL, "lesion_26_52topics_stdeconv.rds\n"))
+#         paste0(save_pathL, "lesion_LDA_model_k_26_52.rds"))
+# cat("Results saved to:", paste0(save_pathL, "lesion_LDA_model_k_26_52.rds\n"))
 # ```
 
 
@@ -241,7 +241,7 @@ cat("Final corpus dimensions:", dim(corpus), "\n")
 
 ```{r read results and save deconvolution lists}
 # Read the LDA results
-ldas_list <- readRDS(paste0(save_pathL, "lesion_26_52topics_stdeconv.rds"))
+ldas_list <- readRDS(paste0(save_pathL, "lesion_LDA_model_k_26_52.rds"))
 
 # Get best model results
 optLDAL <- optimalModel(models = ldas_list, opt = "50")
@@ -965,9 +965,9 @@ cat("Unique dominant cell types:", length(unique(dominant_celltype)), "\n")
 cat("Cell type levels:\n")
 print(levels(Idents(integrated_Eth_cohort_filteredL)))
 
-saveRDS(integrated_Eth_cohort_filteredL, paste0(save_pathL, "Lesion_integrated_Eth_cohort_filtered_", 
-         n_topics_added, "stdeconvTopics_reclus_relabelled_COMBINED_dominantTopic_added.rds"))
+
 ```
+
 ```{r}
 # ==============================================================================
 # FIGURE S2A
@@ -1094,6 +1094,9 @@ print(y)
 dev.off()
 
 cat("Saved dimension reduction plots\n")
+
+
+saveRDS(integrated_Eth_cohort_filteredL, paste0(save_pathL, "lesion_only_integrated_obj_35_LDA_topics_added.rds"))
 
 ```
 
