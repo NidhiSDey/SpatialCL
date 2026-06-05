@@ -11,7 +11,7 @@ date: "2026-01-28"
 # This script performs Latent Dirichlet Allocation (LDA) topic modeling to
 # deconvolve cell types from lesion and non lesional samples
 # input: "integrated_seurat_obj.Rds"
-# output: 1. lda file with 8-60 topics: "combined_lda_model_k8_60.Rdata", 2. final Seurat obj with final selected (and combined) 23 topics added: "integrated_seurat_obj_26_LDA_topics_added.rds"
+# output: 1. lda file with 8-60 topics: "combined_lda_model_k8_60.Rdata", 2. final Seurat obj with final selected (and combined) 23 topics added and updated to SeuratObject_5.4.0: "integrated_seurat_obj_26_LDA_topics_added.rds"
 #code for S1E and Supplementary Table 2
 # ==============================================================================
 
@@ -1085,9 +1085,11 @@ cat("\nMetadata columns after addition:", ncol(integrated_Eth_cohort_filtered@me
 if (!dir.exists(save_path)) {
   dir.create(save_path, recursive = TRUE)
 }
+# Update to the lastest seurat version 
+ integrated_Eth_cohort_filtered<- UpdateSeuratObject(integrated_Eth_cohort_filtered)
 
 # Save integrated object with STdeconvolve results
-output_file <- paste0(save_path, "integrated_seurat_obj_23_LDA_topics_added.rds")
+output_file <- paste0(save_path, "integrated_seurat_obj_23_LDA_topics_added_updated.rds")
 
 saveRDS(integrated_Eth_cohort_filtered, output_file)
 
