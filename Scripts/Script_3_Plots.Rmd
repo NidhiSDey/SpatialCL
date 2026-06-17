@@ -3,7 +3,7 @@ title: "Script_3_plots"
 output: html_document
 date: "2026-02-02"
 ---
-
+###run Script_3_Stdeconvolve_lesion.rmd file before running this script
 ```{r setup, include=FALSE}
 # Load required libraries
 library(patchwork)
@@ -47,7 +47,7 @@ disease_group <- c("MCL", "healthy", "LCL", "healthy", "MCL",
                    "healthy", "LCL", "healthy", "DCL", "healthy")
 
 # Define paths
-read_path <- paste0(study_path, "R/No_P5/")
+read_path <- paste0(study_path, "R/No_P5/test/")
 save_pathL <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_sep/lesion/iteration_nov2025/test/")
 
 
@@ -58,6 +58,9 @@ if(!dir.exists(save_pathL)) {
 
 ###input rds
 integrated_Eth_cohort_filteredL <-readRDS(paste0(save_pathL, "lesion_only_integrated_obj_35_LDA_topics_added.rds"))
+# Read integrated cohort data
+integrated_Eth_cohort <- readRDS(paste0(read_path, 
+  "integrated_seurat_obj.Rds"))
 
 ###celltype colors for plotting
 # ============================================
@@ -125,6 +128,29 @@ celltype_colors <- c(
 my_cols4 <- celltype_colors[order(as.character(names(celltype_colors)))]
 ```
 
+```{r sample Qc spots retained per patient after clean counts}
+# Get spot counts from lesion-only object
+before_lesion_qc <- table(integrated_Eth_cohort$sample_id[
+  integrated_Eth_cohort$group == "lesion"])
+
+after_lesion_qc <- table(integrated_Eth_cohort_filteredL$sample_id)
+
+# Combine into comparison dataframe
+lesion_qc_df <- data.frame(
+  sample_id = names(before_lesion_qc),
+  before_QC = as.numeric(before_lesion_qc),
+  after_QC  = as.numeric(after_lesion_qc)
+) %>%
+  mutate(
+    removed   = before_QC - after_QC
+  )
+
+print(lesion_qc_df)
+cat("\nTotal lesional spots before QC:", sum(lesion_qc_df$before_QC), "\n")
+cat("Total lesional spots after QC:", sum(lesion_qc_df$after_QC), "\n")
+cat("Total removed:", sum(lesion_qc_df$removed), "\n")
+```
+
 
 ```{r}
 # ============================================
@@ -181,7 +207,7 @@ stromal_topics <- c(
 
 
 # Plot stromal topics
-pdf(paste0(save_pathL, "3_C_dimplot_integrated_Eth_cohort_splitby_dominant_groupby_stromal_notrastered.pdf"), 
+pdf(paste0(save_pathL, "3_A_dimplot_integrated_Eth_cohort_splitby_dominant_groupby_stromal_notrastered.pdf"), 
     width = 10, height = 8)
 SCpubr::do_DimPlot(integrated_Eth_cohort_filteredL, 
                    split.by = "dominant_celltype", 
@@ -197,7 +223,7 @@ dev.off()
 
 
 # Plot immune topics
-pdf(paste0(save_pathL, "3_D_dimplot_integrated_Eth_cohort_splitby_dominant_groupby_immune.pdf"), 
+pdf(paste0(save_pathL, "3_B_dimplot_integrated_Eth_cohort_splitby_dominant_groupby_immune.pdf"), 
     width = 12, height = 8)
 SCpubr::do_DimPlot(integrated_Eth_cohort_filteredL, 
                    split.by = "dominant_celltype", 
@@ -231,6 +257,7 @@ dev.off()
 # ============================================
 # Figure 3 C: Create spatial pie chart visualizations
 # ============================================
+
 cat("\n=== Creating spatial visualizations ===\n")
 
 # Create sample_mapping for easy plotting of each lesion plot afterwards
@@ -261,7 +288,7 @@ cat("\nSpots per sample:\n")
 print(table(sample_mappingL$sample))
 
 # Combine immune and stromal ordering
-complete_topic_order <- c(immune_order, stromal_order)
+complete_topic_order <- c(immune_topics, stromal_topics)
 
 # Custom spatial visualization function with pie charts per spot
 create_custom_spatial_plot <- function(theta, pos, colors, title, topic_order, r = 50) {

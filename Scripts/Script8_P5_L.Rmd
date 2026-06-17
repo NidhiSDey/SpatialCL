@@ -1,5 +1,5 @@
 ---
-title: "P6_L Analysis - Figure 8 and Supplementary Figure S7"
+title: "P5_L Analysis - Figure 8 and Supplementary Figure S7"
 output: html_document
 date: "2025-12-15"
 ---
@@ -39,20 +39,20 @@ disease_group <- c("MCL", "healthy", "LCL", "healthy", "MCL",
                    "healthy", "LCL", "healthy", "DCL", "healthy")
 
 # Define paths
-read_path <- paste0(study_path, "R/No_P5/")
-save_pathL <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_sep/lesion/iteration_nov2025/")
-save_path <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_comb/")
+read_path <- paste0(study_path, "R/No_P5/test/")
+save_pathL <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_sep/lesion/iteration_nov2025/test/")
+save_path <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_comb/test/")
 
-# P6 annotation CSV paths
-p6_annot_base <- paste0(study_path, "V12N28-391/")
-p6_h_epi_csv <- paste0(p6_annot_base, "PK_391_7_2_run/outs/Keratinocytes.csv")
-p6_l_epi_csv <- paste0(p6_annot_base, "PK_391_7_4_run/outs/All_Keratinocyte.csv")
-p6_l_subclass_csv <- paste0(p6_annot_base, "PK_391_7_4_run/outs/Keratinocyte_subclass.csv")
+# P5 annotation CSV paths
+P5_annot_base <- paste0(study_path, "V12N28-391/")
+P5_NL_epi_csv <- paste0(P5_annot_base, "PK_391_7_2_run/outs/Keratinocytes.csv")
+P5_L_epi_csv <- paste0(P5_annot_base, "PK_391_7_4_run/outs/All_Keratinocyte.csv")
+P5_L_subclass_csv <- paste0(P5_annot_base, "PK_391_7_4_run/outs/Keratinocyte_subclass.csv")
 
-# Create save directory for P6
-save_pathP6 <- paste0(save_pathL, "P6/test/")
-if(!dir.exists(save_pathP6)) {
-  dir.create(save_pathP6, recursive = TRUE)
+# Create save directory for P5
+save_pathP5 <- paste0(save_pathL, "P5/test/")
+if(!dir.exists(save_pathP5)) {
+  dir.create(save_pathP5, recursive = TRUE)
 }
 ```
 
@@ -60,15 +60,13 @@ if(!dir.exists(save_pathP6)) {
 # LOAD DATA AND DEFINE COLORS
 # ============================================
 ```{r load_data_and_setup}
-# Load lesion-only integrated object
-integrated_Eth_cohort_filteredL <- readRDS(paste0(save_pathL, "lesion_only_integrated_obj_35_LDA_topics_added.rds"))
-
+# Load lesion only integrated object (for P5_L vs other lesions comparison)
+integrated_Eth_cohort_filteredL <- readRDS(paste0(save_pathL, "lesion_only_integrated_obj_35_LDA_topics_added.Rds"))
 cat("Lesion-only object loaded:", ncol(integrated_Eth_cohort_filteredL), "spots\n")
 print(table(integrated_Eth_cohort_filteredL$sample_id))
 
-# Load combined lesion + healthy integrated object
+# Load lesion + non-lesion integrated object (for P5_L vs P5_NL comparison)
 integrated_Eth_cohort_filtered <- readRDS(paste0(save_path, "integrated_seurat_obj_23_LDA_topics_added.rds"))
-
 cat("Combined object loaded:", ncol(integrated_Eth_cohort_filtered), "spots\n")
 print(table(integrated_Eth_cohort_filtered$sample_id))
 
@@ -128,31 +126,31 @@ patient_colors <- c(
   "P2_L" = "#A3A500", 
   "P3_L" = "#00BF7D", 
   "P4_L" = "#00B0F6", 
-  "P6_L" = "#E76BF3"
+  "P5_L" = "#E76BF3"
 )
 
-# Set up P6_L comparison
-integrated_Eth_cohort_filteredL$P6L_group <- ifelse(
-  integrated_Eth_cohort_filteredL$sample_id == "P6_L",
-  "P6_L",
+# Set up P5_L comparison
+integrated_Eth_cohort_filteredL$P5L_group <- ifelse(
+  integrated_Eth_cohort_filteredL$sample_id == "P5_L",
+  "P5_L",
   "Other_Patients"
 )
 
 cat("\n=== Patient Grouping ===\n")
-print(table(integrated_Eth_cohort_filteredL$P6L_group))
+print(table(integrated_Eth_cohort_filteredL$P5L_group))
 
-Idents(integrated_Eth_cohort_filteredL) <- "P6L_group"
+Idents(integrated_Eth_cohort_filteredL) <- "P5L_group"
 ```
 
 # ============================================
-# DIFFERENTIAL EXPRESSION: P6_L vs OTHERS
+# DIFFERENTIAL EXPRESSION: P5_L vs OTHERS
 # ============================================
-```{r DE_P6_vs_others}
-cat("\n=== Running DE: P6_L vs Other Patients ===\n")
+```{r DE_P5_vs_others}
+cat("\n=== Running DE: P5_L vs Other Patients ===\n")
 
-p6_vs_others_DE <- FindMarkers(
+P5_vs_others_DE <- FindMarkers(
   integrated_Eth_cohort_filteredL,
-  ident.1 = "P6_L",
+  ident.1 = "P5_L",
   ident.2 = "Other_Patients",
   min.pct = 0.25,          
   logfc.threshold = 0.5,
@@ -161,65 +159,65 @@ p6_vs_others_DE <- FindMarkers(
 )
 
 # Add gene names
-p6_vs_others_DE$gene <- rownames(p6_vs_others_DE)
+P5_vs_others_DE$gene <- rownames(P5_vs_others_DE)
 
 # Filter significant
-p6_vs_others_sig <- p6_vs_others_DE %>%
+P5_vs_others_sig <- P5_vs_others_DE %>%
   filter(p_val_adj < 0.05) %>%
   arrange(desc(abs(avg_log2FC)))
 
-cat("\n=== P6_L vs Others: Significant DEGs ===\n")
-cat("Total significant DEGs (p_adj<0.05):", nrow(p6_vs_others_sig), "\n")
-cat("Upregulated in P6_L:", sum(p6_vs_others_sig$avg_log2FC > 0), "\n")
-cat("Downregulated in P6_L:", sum(p6_vs_others_sig$avg_log2FC < 0), "\n")
+cat("\n=== P5_L vs Others: Significant DEGs ===\n")
+cat("Total significant DEGs (p_adj<0.05):", nrow(P5_vs_others_sig), "\n")
+cat("Upregulated in P5_L:", sum(P5_vs_others_sig$avg_log2FC > 0), "\n")
+cat("Downregulated in P5_L:", sum(P5_vs_others_sig$avg_log2FC < 0), "\n")
 
 # Save results
-write.csv(p6_vs_others_sig, 
-          paste0(save_pathP6, "P6_vs_Others_DEGs_significant.csv"),
+write.csv(P5_vs_others_sig, 
+          paste0(save_pathP5, "P5_vs_Others_DEGs_significant.csv"),
           row.names = FALSE)
 
 cat("DE analysis complete\n")
 ```
 
 # ============================================
-# FIGURE 8A: Heatmap P6_L vs Others
+# FIGURE 8A: Heatmap P5_L vs Others
 # ============================================
 ```{r figure_8A}
 cat("\n=== FIGURE 8A: Heatmap Top 50 DEGs ===\n")
 
 # Select top 25 up and top 25 down
-top_up <- p6_vs_others_sig %>%
+top_up <- P5_vs_others_sig %>%
   filter(avg_log2FC > 0.5) %>%
   arrange(desc(avg_log2FC)) %>%
   head(25)
 
-top_down <- p6_vs_others_sig %>%
+top_down <- P5_vs_others_sig %>%
   filter(avg_log2FC < -0.5) %>%
   arrange(avg_log2FC) %>%
   head(25)
 
 top_genes <- rbind(top_up, top_down)
-top_genes_p6 <- rownames(top_genes)
+top_genes_P5 <- rownames(top_genes)
 
 # Scale data
 integrated_Eth_cohort_filteredL <- ScaleData(
   integrated_Eth_cohort_filteredL, 
-  features = top_genes_p6
+  features = top_genes_P5
 )
 
-mat_p6 <- GetAssayData(
+mat_P5 <- GetAssayData(
   integrated_Eth_cohort_filteredL, 
-  slot = "scale.data"
-)[top_genes_p6, ]
+  layer = "scale.data"
+)[top_genes_P5, ]
 
 # Column annotation
-col_anno_p6 <- HeatmapAnnotation(
+col_anno_P5 <- HeatmapAnnotation(
   Patient = integrated_Eth_cohort_filteredL$sample_id,
-  Comparison = integrated_Eth_cohort_filteredL$P6L_group,
+  Comparison = integrated_Eth_cohort_filteredL$P5L_group,
   col = list(
     Patient = patient_colors,
     Comparison = c(
-      "P6_L" = "#E76BF3", 
+      "P5_L" = "#E76BF3", 
       "Other_Patients" = "gray80"
     )
   ),
@@ -227,28 +225,28 @@ col_anno_p6 <- HeatmapAnnotation(
 )
 
 # Create heatmap
-pdf(paste0(save_pathP6, "8_A_P6_vs_Others_Heatmap_Top50.pdf"), 
+pdf(paste0(save_pathP5, "8_A_P5_vs_Others_Heatmap_Top50.pdf"), 
     width = 14, height = 14)
 
-ht_p6 <- Heatmap(
-  mat_p6,
+ht_P5 <- Heatmap(
+  mat_P5,
   name = "Scaled\nExpression",
   col = colorRamp2(c(0, 2), c("white", "red")),
-  top_annotation = col_anno_p6,
+  top_annotation = col_anno_P5,
   show_column_names = FALSE,
   show_row_names = TRUE,
   row_names_gp = gpar(fontsize = 7),
   row_names_side = "right",
   cluster_columns = TRUE,
   cluster_rows = TRUE,
-  column_split = integrated_Eth_cohort_filteredL$P6L_group,
+  column_split = integrated_Eth_cohort_filteredL$P5L_group,
   row_split = 6,
-  column_title = "P6_L vs Other Patients: Top 50 DEGs",
+  column_title = "P5_L vs Other Patients: Top 50 DEGs",
   column_title_gp = gpar(fontsize = 14, fontface = "bold"),
   border = TRUE
 )
 
-draw(ht_p6, heatmap_legend_side = "right", annotation_legend_side = "right")
+draw(ht_P5, heatmap_legend_side = "right", annotation_legend_side = "right")
 dev.off()
 
 cat("Figure 8A complete: Heatmap saved\n")
@@ -286,11 +284,11 @@ ker_patient_matrix <- ker_by_patient %>%
   as.matrix()
 
 # Reorder columns
-col_order <- c("P1_L", "P2_L", "P3_L", "P4_L", "P6_L")
+col_order <- c("P1_L", "P2_L", "P3_L", "P4_L", "P5_L")
 ker_patient_matrix <- ker_patient_matrix[, col_order]
 
 write.csv(ker_patient_matrix,
-          paste0(save_pathP6, "Keratinocyte_Proportions_AllPatients.csv"))
+          paste0(save_pathP5, "Keratinocyte_Proportions_AllPatients.csv"))
 
 cat("Keratinocyte proportions calculated\n")
 ```
@@ -315,7 +313,7 @@ col_fun_ker <- colorRamp2(
   c("white", "#FEB24C", "#B2182B")
 )
 
-pdf(paste0(save_pathP6, "8_B_Keratinocyte_Heatmap_AllPatients.pdf"),
+pdf(paste0(save_pathP5, "8_B_Keratinocyte_Heatmap_AllPatients.pdf"),
     width = 8, height = 7)
 
 ht_ker <- Heatmap(
@@ -333,7 +331,7 @@ ht_ker <- Heatmap(
   column_title = "Keratinocyte Sub-population Enrichment Across Patients",
   column_title_gp = gpar(fontsize = 13, fontface = "bold"),
   cell_fun = function(j, i, x, y, width, height, fill) {
-    if (colnames(ker_patient_matrix)[j] == "P6_L") {
+    if (colnames(ker_patient_matrix)[j] == "P5_L") {
       grid.rect(x, y, width, height, 
                 gp = gpar(col = "#E76BF3", lwd = 3, fill = NA))
     }
@@ -394,7 +392,7 @@ p_inflam_ratio <- ggplot(inflamed_comparison,
   ) +
   ylim(0, max(inflamed_comparison$mean_ratio) * 1.15)
 
-ggsave(paste0(save_pathP6, "8_C_Keratinocyte_InflammedRatio.pdf"),
+ggsave(paste0(save_pathP5, "8_C_Keratinocyte_InflammedRatio.pdf"),
        p_inflam_ratio, width = 8, height = 6)
 
 cat("Figure 8C complete: Inflamed ratio barplot saved\n")
@@ -408,7 +406,7 @@ cat("\n=== Statistical Testing: Keratinocyte Enrichment ===\n")
 
 # Reshape for statistics
 ker_for_stats <- meta_all_patients %>%
-  mutate(patient_group = ifelse(sample_id == "P6_L", "P6_L", "Others")) %>%
+  mutate(patient_group = ifelse(sample_id == "P5_L", "P5_L", "Others")) %>%
   pivot_longer(cols = all_of(keratinocyte_celltypes),
                names_to = "celltype",
                values_to = "proportion")
@@ -419,20 +417,20 @@ ker_enrichment_stats <- data.frame()
 for (ct in keratinocyte_celltypes) {
   ct_data <- ker_for_stats %>% filter(celltype == ct)
   
-  p6_values <- ct_data %>% filter(patient_group == "P6_L") %>% pull(proportion)
+  P5_values <- ct_data %>% filter(patient_group == "P5_L") %>% pull(proportion)
   other_values <- ct_data %>% filter(patient_group == "Others") %>% pull(proportion)
   
-  wt <- wilcox.test(p6_values, other_values)
+  wt <- wilcox.test(P5_values, other_values)
   
   ker_enrichment_stats <- rbind(
     ker_enrichment_stats,
     data.frame(
       celltype = ct,
-      p6_mean = mean(p6_values, na.rm = TRUE),
-      p6_median = median(p6_values, na.rm = TRUE),
+      P5_mean = mean(P5_values, na.rm = TRUE),
+      P5_median = median(P5_values, na.rm = TRUE),
       others_mean = mean(other_values, na.rm = TRUE),
       others_median = median(other_values, na.rm = TRUE),
-      fold_change = mean(p6_values, na.rm = TRUE) / mean(other_values, na.rm = TRUE),
+      fold_change = mean(P5_values, na.rm = TRUE) / mean(other_values, na.rm = TRUE),
       p_value = wt$p.value
     )
   )
@@ -448,75 +446,75 @@ cat("Keratinocyte statistics calculated\n")
 ```
 
 # ============================================
-# IMPORT P6 EPIDERMIS ANNOTATIONS
+# IMPORT P5 EPIDERMIS ANNOTATIONS
 # ============================================
 ```{r import_epidermis_annotations}
-cat("\n=== IMPORTING P6 EPIDERMIS ANNOTATIONS ===\n")
+cat("\n=== IMPORTING P5 EPIDERMIS ANNOTATIONS ===\n")
 
 # Import annotations
-p6_H_epi_annotation <- read.csv(p6_h_epi_csv)
-p6_L_epi_annotation <- read.csv(p6_l_epi_csv)
-p6_L_ker_subclass_anno <- read.csv(p6_l_subclass_csv)
+P5_NL_epi_annotation <- read.csv(P5_NL_epi_csv)
+P5_L_epi_annotation <- read.csv(P5_L_epi_csv)
+P5_L_ker_subclass_anno <- read.csv(P5_L_subclass_csv)
 
-cat("P6_H epidermis:", sum(p6_H_epi_annotation$Keratinocytes == "epidermis"), "spots\n")
-cat("P6_L total keratinocytes:", sum(p6_L_epi_annotation$All_Keratinocyte != ""), "spots\n")
-cat("P6_L subclasses:\n")
-print(table(p6_L_ker_subclass_anno$Keratinocyte.subclass))
+cat("P5_NL epidermis:", sum(P5_NL_epi_annotation$Keratinocytes == "epidermis"), "spots\n")
+cat("P5_L total keratinocytes:", sum(P5_L_epi_annotation$All_Keratinocyte != ""), "spots\n")
+cat("P5_L subclasses:\n")
+print(table(P5_L_ker_subclass_anno$Keratinocyte.subclass))
 
-# Prepare P6_H annotations
-p6h_epi_barcodes <- p6_H_epi_annotation %>%
+# Prepare P5_NL annotations
+P5NL_epi_barcodes <- P5_NL_epi_annotation %>%
   filter(Keratinocytes == "epidermis") %>%
   mutate(
     epidermis_type = "Normal",
-    sample_id = "P6_H"
+    sample_id = "P5_NL"
   ) %>%
   select(Barcode, epidermis_type, sample_id)
 
-# Prepare P6_L annotations
-p6l_epi_barcodes <- p6_L_epi_annotation %>%
+# Prepare P5_L annotations
+P5l_epi_barcodes <- P5_L_epi_annotation %>%
   filter(All_Keratinocyte != "") %>%
   mutate(
     epidermis_type = "Acanthotic",
-    sample_id = "P6_L",
+    sample_id = "P5_L",
     epi_region = All_Keratinocyte
   ) %>%
   select(Barcode, epidermis_type, sample_id, epi_region)
 
 # Add subclass information
-p6l_subclass <- p6_L_ker_subclass_anno %>%
+P5l_subclass <- P5_L_ker_subclass_anno %>%
   filter(Keratinocyte.subclass != "") %>%
   select(Barcode, epi_subtype = Keratinocyte.subclass)
 
-p6l_epi_barcodes <- p6l_epi_barcodes %>%
-  left_join(p6l_subclass, by = "Barcode")
+P5l_epi_barcodes <- P5l_epi_barcodes %>%
+  left_join(P5l_subclass, by = "Barcode")
 
-cat("P6_L epidermis:", nrow(p6l_epi_barcodes), "spots\n")
+cat("P5_L epidermis:", nrow(P5l_epi_barcodes), "spots\n")
 
-# Subset P6 samples from combined object
-p6_comparison <- subset(integrated_Eth_cohort_filtered,
-                        subset = sample_id %in% c("P6_L", "P6_H"))
+# Subset P5 samples from combined object
+P5_comparison <- subset(integrated_Eth_cohort_filtered,
+                        subset = sample_id %in% c("P5_L", "P5_NL"))
 
-cat("\n=== P6 Comparison Subset ===\n")
-cat("Total spots:", ncol(p6_comparison), "\n")
-print(table(p6_comparison$sample_id))
+cat("\n=== P5 Comparison Subset ===\n")
+cat("Total spots:", ncol(P5_comparison), "\n")
+print(table(P5_comparison$sample_id))
 
 # Combine annotations
 all_epi_barcodes <- bind_rows(
-  p6h_epi_barcodes %>% select(Barcode, epidermis_type, sample_id),
-  p6l_epi_barcodes %>% select(Barcode, epidermis_type, sample_id)
+  P5NL_epi_barcodes %>% select(Barcode, epidermis_type, sample_id),
+  P5l_epi_barcodes %>% select(Barcode, epidermis_type, sample_id)
 )
 
 # Match barcode format
-p6_spot_ids <- colnames(p6_comparison)
+P5_spot_ids <- colnames(P5_comparison)
 
-if (grepl("-1$", p6_spot_ids[1]) && grepl("-1$", all_epi_barcodes$Barcode[1])) {
+if (grepl("-1$", P5_spot_ids[1]) && grepl("-1$", all_epi_barcodes$Barcode[1])) {
   all_epi_barcodes$Barcode_full <- all_epi_barcodes$Barcode
-} else if (grepl("_\\d+$", p6_spot_ids[1]) && !grepl("_\\d+$", all_epi_barcodes$Barcode[1])) {
+} else if (grepl("_\\d+$", P5_spot_ids[1]) && !grepl("_\\d+$", all_epi_barcodes$Barcode[1])) {
   all_epi_barcodes <- all_epi_barcodes %>%
     mutate(
       Barcode_full = case_when(
-        sample_id == "P6_L" ~ paste0(Barcode, "_10"),
-        sample_id == "P6_H" ~ paste0(Barcode, "_9"),
+        sample_id == "P5_L" ~ paste0(Barcode, "_10"),
+        sample_id == "P5_NL" ~ paste0(Barcode, "_9"),
         TRUE ~ Barcode
       )
     )
@@ -525,28 +523,28 @@ if (grepl("-1$", p6_spot_ids[1]) && grepl("-1$", all_epi_barcodes$Barcode[1])) {
 }
 
 # Filter to epidermal spots
-epi_spots_keep <- all_epi_barcodes$Barcode_full[all_epi_barcodes$Barcode_full %in% colnames(p6_comparison)]
+epi_spots_keep <- all_epi_barcodes$Barcode_full[all_epi_barcodes$Barcode_full %in% colnames(P5_comparison)]
 
-p6_epi <- p6_comparison[, epi_spots_keep]
-p6_epi$epidermis_type <- all_epi_barcodes$epidermis_type[match(colnames(p6_epi), all_epi_barcodes$Barcode_full)]
+P5_epi <- P5_comparison[, epi_spots_keep]
+P5_epi$epidermis_type <- all_epi_barcodes$epidermis_type[match(colnames(P5_epi), all_epi_barcodes$Barcode_full)]
 
-cat("\n=== P6 Epidermis Object ===\n")
-cat("Total epidermal spots:", ncol(p6_epi), "\n")
-print(table(p6_epi$epidermis_type, p6_epi$sample_id))
+cat("\n=== P5 Epidermis Object ===\n")
+cat("Total epidermal spots:", ncol(P5_epi), "\n")
+print(table(P5_epi$epidermis_type, P5_epi$sample_id))
 
-# Add P6_L subtype info
-p6l_spots <- colnames(p6_epi)[p6_epi$sample_id == "P6_L"]
-p6_epi$epi_subtype <- NA
+# Add P5_L subtype info
+P5l_spots <- colnames(P5_epi)[P5_epi$sample_id == "P5_L"]
+P5_epi$epi_subtype <- NA
 
-for (i in 1:nrow(p6l_epi_barcodes)) {
-  bc_full <- if ("Barcode_full" %in% colnames(p6l_epi_barcodes)) {
-    p6l_epi_barcodes$Barcode_full[i]
+for (i in 1:nrow(P5l_epi_barcodes)) {
+  bc_full <- if ("Barcode_full" %in% colnames(P5l_epi_barcodes)) {
+    P5l_epi_barcodes$Barcode_full[i]
   } else {
-    paste0(p6l_epi_barcodes$Barcode[i], "_10")
+    paste0(P5l_epi_barcodes$Barcode[i], "_10")
   }
   
-  if (bc_full %in% colnames(p6_epi) && !is.na(p6l_epi_barcodes$epi_subtype[i])) {
-    p6_epi$epi_subtype[colnames(p6_epi) == bc_full] <- p6l_epi_barcodes$epi_subtype[i]
+  if (bc_full %in% colnames(P5_epi) && !is.na(P5l_epi_barcodes$epi_subtype[i])) {
+    P5_epi$epi_subtype[colnames(P5_epi) == bc_full] <- P5l_epi_barcodes$epi_subtype[i]
   }
 }
 
@@ -554,13 +552,13 @@ cat("Annotations imported successfully\n")
 ```
 
 # ============================================
-# FIGURE 8D: Spatial P6_L vs P6_H Epidermis
+# FIGURE 8D: Spatial P5_L vs P5_NL Epidermis
 # ============================================
 ```{r figure_8D}
 cat("\n=== FIGURE 8D: Spatial Epidermis Annotation ===\n")
 
 p1_h_spatial <- SpatialDimPlot(
-  p6_epi,
+  P5_epi,
   group.by = "epidermis_type",
   images = "Eth_391_7_2", 
   pt.size.factor = 1.5,
@@ -568,10 +566,10 @@ p1_h_spatial <- SpatialDimPlot(
   cols = c("Acanthotic" = "#E64B35", "Normal" = "#4DBBD5"),
   alpha = 0.8
 ) +
-  labs(title = "P6_H: Normal Epidermis")
+  labs(title = "P5_NL: Normal Epidermis")
 
 p1_l_spatial <- SpatialDimPlot(
-  p6_epi,
+  P5_epi,
   group.by = "epidermis_type",
   images = "Eth_391_7_4", 
   pt.size.factor = 1.5,
@@ -579,11 +577,11 @@ p1_l_spatial <- SpatialDimPlot(
   cols = c("Acanthotic" = "#E64B35", "Normal" = "#4DBBD5"),
   alpha = 0.8
 ) +
-  labs(title = "P6_L: Acanthotic Epidermis")
+  labs(title = "P5_L: Acanthotic Epidermis")
 
 p_spatial <- p1_h_spatial + p1_l_spatial
 
-ggsave(paste0(save_pathP6, "8_D_Spatial_P6_Epidermis_LvsH_Annotated.pdf"),
+ggsave(paste0(save_pathP5, "8_D_Spatial_P5_Epidermis_LvsH_Annotated.pdf"),
        p_spatial, width = 14, height = 7)
 
 cat("Figure 8D complete: Spatial plots saved\n")
@@ -595,11 +593,11 @@ cat("Figure 8D complete: Spatial plots saved\n")
 ```{r DE_acanthotic_vs_normal}
 cat("\n=== DE: Acanthotic vs Normal Epidermis ===\n")
 
-Idents(p6_epi) <- "epidermis_type"
-p6_epi <- PrepSCTFindMarkers(p6_epi)
+Idents(P5_epi) <- "epidermis_type"
+P5_epi <- PrepSCTFindMarkers(P5_epi)
 
 acanthotic_vs_normal <- FindMarkers(
-  p6_epi,
+  P5_epi,
   ident.1 = "Acanthotic",
   ident.2 = "Normal",
   min.pct = 0.25,
@@ -646,14 +644,13 @@ genes_by_category <- list(
 )
 
 p_scpubr_dotplot <- SCpubr::do_DotPlot(
-  sample = p6_epi,
+  sample = P5_epi,
   features = genes_by_category,
-  cluster = FALSE,
   plot.caption.face = "italic",
   flip = TRUE
 )
 
-ggsave(paste0(save_pathP6, "8_E_P6_Acanthotic_DotPlot.pdf"),
+ggsave(paste0(save_pathP5, "8_E_P5_Acanthotic_DotPlot.pdf"),
        p_scpubr_dotplot, width = 10, height = 16)
 
 cat("Figure 8E complete: Dotplot saved\n")
@@ -700,78 +697,79 @@ cat("Acanthotic genes annotated\n")
 ```
 
 # ============================================
-# P6_L EPIDERMIS SUBCLUSTERING
+# P5_L EPIDERMIS SUBCLUSTERING
 # ============================================
-```{r P6L_epidermis_subclustering}
-cat("\n=== P6_L EPIDERMIS SUBCLUSTERING ===\n")
+```{r P5L_epidermis_subclustering}
+cat("\n=== P5_L EPIDERMIS SUBCLUSTERING ===\n")
 
-# Subset P6_L from lesional object
-p6l_lesional <- subset(integrated_Eth_cohort_filteredL, subset = sample_id == "P6_L")
+# Subset P5_L from lesional object
+P5l_lesional <- subset(integrated_Eth_cohort_filteredL, subset = sample_id == "P5_L")
 
-cat("P6_L lesional spots:", ncol(p6l_lesional), "\n")
+cat("P5_L lesional spots:", ncol(P5l_lesional), "\n")
 
-# Import P6_L annotations
-p6l_annot <- p6_L_epi_annotation %>%
+# Import P5_L annotations
+P5l_annot <- P5_L_epi_annotation %>%
   select(Barcode, epi_region = All_Keratinocyte) %>%
   left_join(
-    p6_L_ker_subclass_anno %>% select(Barcode, epi_subtype = Keratinocyte.subclass),
+    P5_L_ker_subclass_anno %>% select(Barcode, epi_subtype = Keratinocyte.subclass),
     by = "Barcode"
   )
 
 # Add barcode suffix
-p6l_barcodes <- colnames(p6l_lesional)
+P5l_barcodes <- colnames(P5l_lesional)
 
-if (grepl("_10$", p6l_barcodes[1]) && !grepl("_10$", p6l_annot$Barcode[1])) {
-  p6l_annot$Barcode_full <- paste0(p6l_annot$Barcode, "_10")
+if (grepl("_10$", P5l_barcodes[1]) && !grepl("_10$", P5l_annot$Barcode[1])) {
+  P5l_annot$Barcode_full <- paste0(P5l_annot$Barcode, "_10")
 } else {
-  p6l_annot$Barcode_full <- p6l_annot$Barcode
+  P5l_annot$Barcode_full <- P5l_annot$Barcode
 }
 
 # Add annotations
-p6l_lesional$epi_region <- NA
-p6l_lesional$epi_subtype <- NA
-p6l_lesional$is_epidermis <- "Non-Epidermis"
+P5l_lesional$epi_region <- NA
+P5l_lesional$epi_subtype <- NA
+P5l_lesional$is_epidermis <- "Non-Epidermis"
 
-for (i in 1:nrow(p6l_annot)) {
-  bc <- p6l_annot$Barcode_full[i]
+for (i in 1:nrow(P5l_annot)) {
+  bc <- P5l_annot$Barcode_full[i]
   
-  if (bc %in% colnames(p6l_lesional)) {
-    if (p6l_annot$epi_region[i] != "") {
-      p6l_lesional$epi_region[colnames(p6l_lesional) == bc] <- p6l_annot$epi_region[i]
-      p6l_lesional$is_epidermis[colnames(p6l_lesional) == bc] <- "Epidermis"
+  if (bc %in% colnames(P5l_lesional)) {
+    if (P5l_annot$epi_region[i] != "") {
+      P5l_lesional$epi_region[colnames(P5l_lesional) == bc] <- P5l_annot$epi_region[i]
+      P5l_lesional$is_epidermis[colnames(P5l_lesional) == bc] <- "Epidermis"
     }
     
-    if (!is.na(p6l_annot$epi_subtype[i]) && p6l_annot$epi_subtype[i] != "") {
-      p6l_lesional$epi_subtype[colnames(p6l_lesional) == bc] <- p6l_annot$epi_subtype[i]
+    if (!is.na(P5l_annot$epi_subtype[i]) && P5l_annot$epi_subtype[i] != "") {
+      P5l_lesional$epi_subtype[colnames(P5l_lesional) == bc] <- P5l_annot$epi_subtype[i]
     }
   }
 }
 
 cat("\n=== Annotation Summary ===\n")
-cat("Epidermis spots:", sum(p6l_lesional$is_epidermis == "Epidermis"), "\n")
-print(table(p6l_lesional$epi_subtype, useNA = "ifany"))
+cat("Epidermis spots:", sum(P5l_lesional$is_epidermis == "Epidermis"), "\n")
+print(table(P5l_lesional$epi_subtype, useNA = "ifany"))
 
 # Subset to epidermis
-p6l_epidermis <- subset(p6l_lesional, subset = is_epidermis == "Epidermis")
+P5l_epidermis <- subset(P5l_lesional, subset = is_epidermis == "Epidermis")
 
-cat("Epidermal spots for subclustering:", ncol(p6l_epidermis), "\n")
+cat("Epidermal spots for subclustering:", ncol(P5l_epidermis), "\n")
 
 # Re-process
-p6l_epidermis <- FindVariableFeatures(p6l_epidermis, nfeatures = 2000)
-p6l_epidermis <- ScaleData(p6l_epidermis)
-p6l_epidermis <- RunPCA(p6l_epidermis, npcs = 30, verbose = FALSE)
-p6l_epidermis <- RunUMAP(p6l_epidermis, dims = 1:10, verbose = FALSE)
-p6l_epidermis <- FindNeighbors(p6l_epidermis, dims = 1:10, verbose = FALSE)
+P5l_epidermis <- FindVariableFeatures(P5l_epidermis, nfeatures = 2000)
+P5l_epidermis <- ScaleData(P5l_epidermis)
+P5l_epidermis <- RunPCA(P5l_epidermis, npcs = 50, verbose = FALSE)
+ElbowPlot(P5l_epidermis)
+P5l_epidermis <- RunUMAP(P5l_epidermis, dims = 1:15, verbose = FALSE)
+P5l_epidermis <- FindNeighbors(P5l_epidermis, dims = 1:15, verbose = FALSE)
 
 # Clustering at resolution 0.8
-p6l_epidermis <- FindClusters(p6l_epidermis, resolution = 0.8, verbose = FALSE)
+P5l_epidermis <- FindClusters(P5l_epidermis, resolution = 0.8, verbose = FALSE)
 
-cat("\n=== Clusters at resolution 0.8 ===\n")
-print(table(p6l_epidermis$SCT_snn_res.0.8))
+cat("\n=== Clusters at resolution 0.6 ===\n")
+print(table(P5l_epidermis$SCT_snn_res.0.8))
 
 # Find markers
 epi_cluster_markers <- FindAllMarkers(
-  p6l_epidermis,
+  P5l_epidermis,
   only.pos = TRUE,
   min.pct = 0.25,
   logfc.threshold = 0.5,
@@ -783,7 +781,7 @@ epi_cluster_markers_sig <- epi_cluster_markers %>%
   arrange(cluster, desc(avg_log2FC))
 
 write.csv(epi_cluster_markers_sig, 
-          paste0(save_pathP6, "epi_cluster_markers_sig.csv"))
+          paste0(save_pathP5, "epi_cluster_markers_sig.csv"))
 
 cat("Subclustering complete\n")
 ```
@@ -799,23 +797,23 @@ cluster_names_final <- c(
   "0" = "Inflamed_Keratinocytes",
   "1" = "Fibrotic_Tissue",
   "2" = "Innervated_Suprabasal",
-  "3" = "Rete_Ridge_Hyperplasia",
-  "4" = "Cornified_Layer",
+  "3" = "Cornified_Layer",
+  "4" = "Rete_Ridge_Hyperplasia",
   "5" = "Metabolic"
 )
 
 # Get cluster IDs
-cluster_ids <- as.character(p6l_epidermis$SCT_snn_res.0.8)
+cluster_ids <- as.character(P5l_epidermis$SCT_snn_res.0.8)
 
 # Map to cluster names (removing names)
 cluster_labels <- cluster_names_final[cluster_ids]
 names(cluster_labels) <- NULL  # Remove names
 
 # Add to metadata
-p6l_epidermis$cluster_name <- cluster_labels
+P5l_epidermis$cluster_name <- cluster_labels
 
-p6l_epidermis$cluster_name <- factor(
-  p6l_epidermis$cluster_name,
+P5l_epidermis$cluster_name <- factor(
+  P5l_epidermis$cluster_name,
   levels = c("Rete_Ridge_Hyperplasia", "Inflamed_Keratinocytes", 
             "Innervated_Suprabasal", "Cornified_Layer", 
             "Fibrotic_Tissue", "Metabolic")
@@ -831,7 +829,7 @@ cluster_colors <- c(
   "Metabolic" = "#91D1C2"
 )
 
-Idents(p6l_epidermis) <- "cluster_name"
+Idents(P5l_epidermis) <- "cluster_name"
 
 cat("Clusters annotated\n")
 ```
@@ -843,7 +841,7 @@ cat("Clusters annotated\n")
 cat("\n=== FIGURE 8F: UMAP Clusters ===\n")
 
 p_umap_final <- DimPlot(
-  p6l_epidermis,
+  P5l_epidermis,
   reduction = "umap",
   label = TRUE,
   label.size = 4.5,
@@ -852,14 +850,14 @@ p_umap_final <- DimPlot(
   pt.size = 2,
   cols = cluster_colors
 ) +
-  labs(title = "P6_L Epidermis: Unbiased Clustering") +
+  labs(title = "P5_L Epidermis: Unbiased Clustering") +
   theme_void() +
   theme(
     plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
     legend.position = "right"
   )
 
-ggsave(paste0(save_pathP6, "8_F_UMAP_Clusters.pdf"),
+ggsave(paste0(save_pathP5, "8_F_UMAP_Clusters.pdf"),
        p_umap_final, width = 10, height = 8)
 
 cat("Figure 8F complete: UMAP saved\n")
@@ -872,21 +870,21 @@ cat("Figure 8F complete: UMAP saved\n")
 cat("\n=== FIGURE 8G: Spatial Clusters ===\n")
 
 p_spatial_final <- SpatialDimPlot(
-  p6l_epidermis,
+  P5l_epidermis,
   group.by = "cluster_name",
   pt.size.factor = 4,
   alpha = 0.9,
   cols = cluster_colors, 
   label = TRUE
 ) +
-  labs(title = "P6_L: Epidermal Cluster Spatial Distribution") +
+  labs(title = "P5_L: Epidermal Cluster Spatial Distribution") +
   theme_void() +
   theme(
     plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
     legend.position = "right"
   )
 
-ggsave(paste0(save_pathP6, "8_G_Spatial_Clusters.pdf"),
+ggsave(paste0(save_pathP5, "8_G_Spatial_Clusters.pdf"),
        p_spatial_final, width = 11, height = 9)
 
 cat("Figure 8G complete: Spatial plot saved\n")
@@ -899,12 +897,12 @@ cat("Figure 8G complete: Spatial plot saved\n")
 cat("\n=== FIGURE 8H: Cell Type Enrichment ===\n")
 
 # Get available cell types
-all_celltypes_available <- colnames(p6l_epidermis@meta.data)[
-  colnames(p6l_epidermis@meta.data) %in% celltypes
+all_celltypes_available <- colnames(P5l_epidermis@meta.data)[
+  colnames(P5l_epidermis@meta.data) %in% celltypes
 ]
 
 # Calculate enrichment
-celltype_enrichment <- p6l_epidermis@meta.data %>%
+celltype_enrichment <- P5l_epidermis@meta.data %>%
   select(cluster_name, all_of(all_celltypes_available)) %>%
   pivot_longer(cols = -cluster_name, names_to = "celltype", values_to = "proportion") %>%
   group_by(cluster_name, celltype) %>%
@@ -925,7 +923,7 @@ p_celltype_stacked <- ggplot(celltype_enrichment_filtered,
   geom_bar(stat = "identity", position = "stack", color = "black", size = 0.3) +
   scale_fill_manual(values = celltype_colors, name = "Cell Type") +
   labs(
-    title = "P6_L: Non-Keratinocyte Cell Infiltration by Cluster",
+    title = "P5_L: Non-Keratinocyte Cell Infiltration by Cluster",
     subtitle = "Mean proportion of immune and stromal cells",
     x = "Epidermal Cluster",
     y = "Mean Proportion"
@@ -939,7 +937,7 @@ p_celltype_stacked <- ggplot(celltype_enrichment_filtered,
     legend.position = "right"
   )
 
-ggsave(paste0(save_pathP6, "8_H_CellType_Stacked.pdf"),
+ggsave(paste0(save_pathP5, "8_H_CellType_Stacked.pdf"),
        p_celltype_stacked, width = 4, height = 5)
 
 cat("Figure 8H complete: Cell type enrichment saved\n")
@@ -976,22 +974,22 @@ genes_curated <- list(
 
 # Filter to present genes
 genes_curated_filtered <- lapply(genes_curated, function(gene_vec) {
-  gene_vec[gene_vec %in% rownames(p6l_epidermis)]
+  gene_vec[gene_vec %in% rownames(P5l_epidermis)]
 })
 
 genes_curated_filtered <- genes_curated_filtered[sapply(genes_curated_filtered, length) > 0]
 
 p_dotplot_final <- SCpubr::do_DotPlot(
-  sample = p6l_epidermis,
+  sample = P5l_epidermis,
   features = genes_curated_filtered,
   flip = TRUE,
   legend.position = "right",
-  plot.title = "P6_L Epidermis: Cluster Signature Genes",
+  plot.title = "P5_L Epidermis: Cluster Signature Genes",
   font.size = 11,
   dot.scale = 8
 )
 
-ggsave(paste0(save_pathP6, "S7_A_DotPlot_ClusterMarkers.pdf"),
+ggsave(paste0(save_pathP5, "S7_A_DotPlot_ClusterMarkers.pdf"),
        p_dotplot_final, width = 12, height = 14)
 
 cat("Supplementary Figure S7A complete: Dotplot saved\n")
@@ -1004,12 +1002,12 @@ cat("Supplementary Figure S7A complete: Dotplot saved\n")
 cat("\n=== SUPPLEMENTARY FIGURE S7B: Spatial Visualizations ===\n")
 
 # Panel 1: Highlighted clusters
-pdf(paste0(save_pathP6, "S7_B_TOP_PANEL_Clusters_Highlighted.pdf"), 12, 10)
+pdf(paste0(save_pathP5, "S7_B_TOP_PANEL_Clusters_Highlighted.pdf"), 12, 10)
 
 cluster_spatial_plots <- SpatialDimPlot(
-  p6l_epidermis, 
+  P5l_epidermis, 
   cells.highlight = CellsByIdentities(
-    object = p6l_epidermis, 
+    object = P5l_epidermis, 
     idents = c("Rete_Ridge_Hyperplasia", "Inflamed_Keratinocytes", 
                "Innervated_Suprabasal", "Cornified_Layer",
                "Fibrotic_Tissue", "Metabolic")
@@ -1024,8 +1022,8 @@ print(cluster_spatial_plots)
 dev.off()
 
 # Panel 2: Scatterpie plots
-coords <- GetTissueCoordinates(p6l_epidermis)
-meta <- p6l_epidermis@meta.data
+coords <- GetTissueCoordinates(P5l_epidermis)
+meta <- P5l_epidermis@meta.data
 spatial_data <- cbind(coords, meta)
 
 # Top 12 cell types
@@ -1051,7 +1049,7 @@ p_scatterpie_all <- ggplot() +
   facet_wrap(~cluster_name, ncol = 3) +
   coord_equal() +
   labs(
-    title = "P6_L Epidermis: Cell Type Composition by Cluster",
+    title = "P5_L Epidermis: Cell Type Composition by Cluster",
     subtitle = "Each pie represents one spot"
   ) +
   theme_classic() +
@@ -1064,7 +1062,7 @@ p_scatterpie_all <- ggplot() +
     axis.title = element_blank()
   )
 
-ggsave(paste0(save_pathP6, "S7_B_BOTTOM_PANEL_Scatterpie_AllClusters.pdf"),
+ggsave(paste0(save_pathP5, "S7_B_BOTTOM_PANEL_Scatterpie_AllClusters.pdf"),
        p_scatterpie_all, width = 16, height = 12)
 
 cat("Supplementary Figure S7B complete: Both panels saved\n")
@@ -1077,7 +1075,7 @@ cat("Supplementary Figure S7B complete: Both panels saved\n")
 cat("\n=== Statistical Testing: Cell Type Enrichment ===\n")
 
 # Spot-level data
-celltype_spot_level <- p6l_epidermis@meta.data %>%
+celltype_spot_level <- P5l_epidermis@meta.data %>%
   select(cluster_name, all_of(all_celltypes_available)) %>%
   pivot_longer(cols = -cluster_name, names_to = "celltype", values_to = "proportion")
 
@@ -1200,16 +1198,16 @@ cluster_info <- data.frame(
 
 cluster_info$Signature_Genes <- sapply(cluster_info$Cluster_Name, function(name) {
   genes <- gene_mapping[[name]]
-  genes_present <- genes[genes %in% rownames(p6l_epidermis)]
+  genes_present <- genes[genes %in% rownames(P5l_epidermis)]
   paste(genes_present, collapse = ", ")
 })
 
 cluster_info$N_Signature_Genes <- sapply(cluster_info$Cluster_Name, function(name) {
   genes <- gene_mapping[[name]]
-  sum(genes %in% rownames(p6l_epidermis))
+  sum(genes %in% rownames(P5l_epidermis))
 })
 
-cluster_counts <- table(p6l_epidermis$cluster_name)
+cluster_counts <- table(P5l_epidermis$cluster_name)
 cluster_info$N_Spots <- cluster_counts[match(cluster_info$Cluster_Name, names(cluster_counts))]
 
 cluster_table <- cluster_info %>%
@@ -1228,28 +1226,28 @@ cat("\n=== SAVING SUPPLEMENTARY TABLES ===\n")
 
 # S_Table_5: Keratinocyte enrichment stats
 write.csv(ker_enrichment_stats,
-          paste0(save_pathP6, "S_Table_5_Keratinocyte_Stats_P6vsOthers.csv"),
+          paste0(save_pathP5, "S_Table_5_Keratinocyte_Stats_P5vsOthers.csv"),
           row.names = FALSE)
 
 cat("S_Table_5 saved: Keratinocyte enrichment statistics\n")
 
 # S_Table_6: Acanthotic vs Normal DEGs
 write.csv(de_genes_annotated,
-          paste0(save_pathP6, "S_Table_6_Acanthotic_vs_Normal_DEGs_Annotated.csv"),
+          paste0(save_pathP5, "S_Table_6_Acanthotic_vs_Normal_DEGs_Annotated.csv"),
           row.names = FALSE)
 
 cat("S_Table_6 saved: Acanthotic vs Normal DEGs\n")
 
 # S_Table_7: Cluster summary
 write.csv(cluster_table,
-          paste0(save_pathP6, "S_Table_7_P6L_Epidermis_Cluster_Summary.csv"),
+          paste0(save_pathP5, "S_Table_7_P5L_Epidermis_Cluster_Summary.csv"),
           row.names = FALSE)
 
 cat("S_Table_7 saved: Cluster summary table\n")
 
 # S_Table_8: Cell type enrichment statistics
 write.csv(significant_enrichments,
-          paste0(save_pathP6, "S_Table_8_Significant_CellType_Enrichments.csv"),
+          paste0(save_pathP5, "S_Table_8_Significant_CellType_Enrichments.csv"),
           row.names = FALSE)
 
 cat("S_Table_8 saved: Cell type enrichment statistics\n")

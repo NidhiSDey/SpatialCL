@@ -38,9 +38,9 @@ disease_group <- c("MCL", "healthy", "LCL", "healthy", "MCL",
                    "healthy", "LCL", "healthy", "DCL", "healthy")
 
 # Define paths
-read_path <- paste0(study_path, "R/No_P5/")
-save_pathL <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_sep/lesion/iteration_nov2025/")
-save_path <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_comb/")
+read_path <- paste0(study_path, "R/No_P5/test/")
+save_pathL <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_sep/lesion/iteration_nov2025/test/")
+save_path <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_comb/test/")
 
 # Create directories if they don't exist 
 if(!dir.exists(save_pathL)) {
@@ -124,7 +124,7 @@ create_custom_spatial_plot <- function(theta, pos, colors, title, topic_order, r
 # ============================================
 ```{r load_data_and_setup}
 # Load lesion only integrated object (for P1_L vs other lesions comparison)
-integrated_Eth_cohort_filteredL <- readRDS(paste0(save_pathL, "lesion_only_integrated_obj_35_LDA_topics_added.rds"))
+integrated_Eth_cohort_filteredL <- readRDS(paste0(save_pathL, "lesion_only_integrated_obj_35_LDA_topics_added.Rds"))
 cat("Lesion-only object loaded:", ncol(integrated_Eth_cohort_filteredL), "spots\n")
 print(table(integrated_Eth_cohort_filteredL$sample_id))
 
@@ -202,15 +202,15 @@ cat("\n=== FIGURE 4A: Differential Expression Heatmap (P1_L vs Others) ===\n")
 
 # Set identity for DE
 Idents(integrated_Eth_cohort_filteredL) <- "P1L_group"
-
+integrated_Eth_cohort_filteredL<-PrepSCTFindMarkers(integrated_Eth_cohort_filteredL)
 # Differential expression
 de_results <- FindMarkers(
   integrated_Eth_cohort_filteredL,
   ident.1 = "P1_L",
   ident.2 = "Others",
   test.use = "wilcox",
-  logfc.threshold = 0.25,
-  min.pct = 0.1
+  logfc.threshold = 0.5,
+  min.pct = 0.25, 
 )
 
 # Add gene names
@@ -227,7 +227,7 @@ write.csv(de_results, paste0(save_pathP1, "De_results_p1vs_others_top100.csv"))
 
 # Extract expression matrix
 integrated_Eth_cohort_filteredL <- ScaleData(integrated_Eth_cohort_filteredL, features = top_genes)
-mat <- GetAssayData(integrated_Eth_cohort_filteredL, slot = "scale.data")[top_genes, ]
+mat <- GetAssayData(integrated_Eth_cohort_filteredL, layer = "scale.data")[top_genes, ]
 
 # Prepare annotations
 col_anno <- HeatmapAnnotation(
@@ -306,7 +306,7 @@ p <- SCpubr::do_BoxPlot(
   sample = integrated_Eth_cohort_filteredL,
   feature = "Cytotoxicity_score1",group.by = "sample_id",
   use_test = TRUE, colors.use = c("P1_L" = "#E64B35", "P2_L" = "#4DBBD5", 
-           "P3_L" = "#00A087", "P4_L" = "#3C5488", "P6_L" = "#F39B7F"),
+           "P3_L" = "#00A087", "P4_L" = "#3C5488", "P5_L" = "#F39B7F"),
   comparisons = list(c("P1_L", "P2_L"),
                      c("P1_L", "P3_L"),
                      c("P1_L", "P4_L")),
@@ -495,7 +495,7 @@ p1 <- FeatureScatter(
   group.by = "sample_id",
   pt.size = 1.5,
   cols = c("P1_L" = "#E64B35", "P2_L" = "#4DBBD5", 
-           "P3_L" = "#00A087", "P4_L" = "#3C5488", "P6_L" = "#F39B7F")
+           "P3_L" = "#00A087", "P4_L" = "#3C5488", "P5_L" = "#F39B7F")
 ) +
   ggtitle("Cytotoxicity Score vs Total Cytotoxic Cells") +
   theme_classic()
@@ -643,7 +643,7 @@ P1_subset <- PrepSCTFindMarkers(P1_subset)
 P1_de_results <- FindMarkers(
   P1_subset,
   ident.1 = "P1_L",
-  ident.2 = "P1_H",
+  ident.2 = "P1_NL",
   test.use = "wilcox",
   logfc.threshold = 0.25,
   min.pct = 0.1
@@ -661,7 +661,7 @@ write.csv(P1_de_results, paste0(save_pathP1, "DE_results_p1L_vs_p1H.csv"))
 
 # Extract expression matrix
 P1_subset <- ScaleData(P1_subset, features = top_genes)
-mat <- GetAssayData(P1_subset, slot = "scale.data")[top_genes, ]
+mat <- GetAssayData(P1_subset, layer = "scale.data")[top_genes, ]
 
 # Prepare annotations
 col_anno <- HeatmapAnnotation(
@@ -669,7 +669,7 @@ col_anno <- HeatmapAnnotation(
   Comparison = P1_subset$sample_id,
   col = list(
     Patient = setNames(scales::hue_pal()(2), unique(P1_subset$sample_id)),
-    Comparison = c("P1_L" = "#E64B35", "P1_H" = "#4DBBD5")
+    Comparison = c("P1_L" = "#E64B35", "P1_NL" = "#4DBBD5")
   )
 )
 

@@ -10,8 +10,8 @@ date: "2026-01-28"
 # ==============================================================================
 # This script performs Latent Dirichlet Allocation (LDA) topic modeling to
 # deconvolve cell types from lesion and non lesional samples
-# input: "integrated_seurat_obj.Rds"
-# output: 1. lda file with 8-60 topics: "combined_lda_model_k8_60.Rdata", 2. final Seurat obj with final selected (and combined) 23 topics added and updated to SeuratObject_5.4.0: "integrated_seurat_obj_26_LDA_topics_added.rds"
+# input: "integrated_seurat_obj.rds"
+# output: 1. lda file with 8-60 topics: "combined_lda_model_k8_60.Rdata", 2. final Seurat obj with final selected (and combined) 23 topics added: integrated_seurat_obj_23_LDA_topics_added.rds
 #code for S1E and Supplementary Table 2
 # ==============================================================================
 
@@ -62,7 +62,7 @@ sample_group <- rep(c("healthy", "lesion"), 5)
 
 
 # Paths
-read_path <- paste0(study_path, "R/No_P5/")
+read_path <- paste0(study_path, "R/No_P5/test/")
 save_path <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_comb/test/")
 
 # Create save directory if needed
@@ -79,7 +79,7 @@ if (!dir.exists(save_path)) {
 
 # Load integrated Seurat object with annotations
 integrated_Eth_cohort <- readRDS(
-  paste0(read_path, "integrated_seurat_obj.Rds"))
+  paste0(read_path, "integrated_seurat_obj.rds"))
 
 
 ```
@@ -218,6 +218,10 @@ cat("After cleanCounts:\n")
 cat("Genes:", nrow(counts), "\n")
 cat("Spots:", ncol(counts), "\n")
 cat("==================================================\n\n")
+# First run cleanCounts on each sample separately to get per-sample stats
+# Get original spot counts per sample from raw data before QC
+original_counts <- table(integrated_Eth_cohort$sample_id)
+
 
 # ------------------------------------------------------------------------------
 # Step 2: Remove Keratin and Immunoglobulin Genes
@@ -773,7 +777,6 @@ print(sort(rownames(deconGexp_combined)))
 cat("==================================================\n")
 
 ```
-
 ```{r}
 # ==============================================================================
 # EXTRACT TOP 40 GENES FOR COMBINED TOPICS and Supplementary Table 2
@@ -1041,6 +1044,29 @@ integrated_Eth_cohort_filtered <- subset(
 )
 
 cat("Filtered Seurat object spots:", ncol(integrated_Eth_cohort_filtered), "\n")
+# Spots retained after QC (from your metadata)
+# Create comparison dataframe
+before <- as.data.frame(table(integrated_Eth_cohort$sample_id))
+after  <- as.data.frame(table(integrated_Eth_cohort_filtered$sample_id))
+
+colnames(before) <- c("sample_id", "before_QC")
+colnames(after)  <- c("sample_id", "after_QC")
+
+qc_comparison <- before %>%
+  left_join(after, by = "sample_id") %>%
+  mutate(
+    removed  = before_QC - after_QC,
+    sample_id = recode(sample_id,
+                       "P6_L" = "P5_L",
+                       "P6_H" = "P5_H")
+  )
+
+print(qc_comparison)
+
+# Summary
+cat("\nTotal spots before QC:", sum(qc_comparison$before_QC), "\n")
+cat("Total spots after QC:", sum(qc_comparison$after_QC), "\n")
+cat("Total spots removed:", sum(qc_comparison$removed), "\n")
 
 # ------------------------------------------------------------------------------
 # Verify Alignment Between Datasets
@@ -1085,11 +1111,10 @@ cat("\nMetadata columns after addition:", ncol(integrated_Eth_cohort_filtered@me
 if (!dir.exists(save_path)) {
   dir.create(save_path, recursive = TRUE)
 }
-# Update to the lastest seurat version 
- integrated_Eth_cohort_filtered<- UpdateSeuratObject(integrated_Eth_cohort_filtered)
 
 # Save integrated object with STdeconvolve results
-output_file <- paste0(save_path, "integrated_seurat_obj_23_LDA_topics_added_updated.rds")
+output_file <- paste0(save_path, "integrated_seurat_obj_", 
+                      n_topics_combined, "_LDA_topics_added.rds")
 
 saveRDS(integrated_Eth_cohort_filtered, output_file)
 
@@ -1109,11 +1134,12 @@ cat("\n==================================================\n")
 cat("STdeconvolve Analysis Pipeline Complete!\n")
 cat("==================================================\n")
 cat("\nGenerated Files:\n")
-cat("1. LDA model:", paste0("ldas_noKRTigG_allOD_k8to60_lesiononly.Rdata\n"))
+cat("1. LDA model:", paste0("combined_lda_model_k8_60.Rdata\n"))
 cat("2. Gene expression profiles:", paste0("deconGexp_", n_topics_combined, "topics_COMBINED.csv\n"))
 cat("3. Topic proportions:", paste0("deconProp_", n_topics_combined, "topics_COMBINED.csv\n"))
 cat("4. Top 40 genes table:", paste0("combined_", n_topics_combined, "topics_COMBINED_top40_genes.csv\n"))
-cat("5. Integrated Seurat object:", paste0("integrated_Eth_cohort_filtered_", n_topics_combined, "stdeconvTopics_labelled.rds\n"))
+cat("5. Integrated Seurat object:", paste0("integrated_seurat_obj_", 
+                      n_topics_combined, "_LDA_topics_added.rds \n"))
 cat("6. Supplementary Table 2: Supplementary_Table_STdeconvolve_Combined_Topics.csv\n")
 cat("7. Topic visualizations with gene labels\n")
 cat("\nTopics identified:", n_topics_combined, "\n")

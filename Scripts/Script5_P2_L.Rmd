@@ -34,10 +34,9 @@ sample_group <- rep(c("healthy", "lesion"), 5)
 
 
 # Define paths
-read_path <- paste0(study_path, "R/No_P5/")
-save_pathL <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_sep/lesion/iteration_nov2025/")
-save_path <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_comb/")
-
+read_path <- paste0(study_path, "R/No_P5/test/")
+save_pathL <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_sep/lesion/iteration_nov2025/test/")
+save_path <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_comb/test/")
 # Create save directory for P2
 save_pathP2 <- paste0(save_pathL, "P2/test/")
 if(!dir.exists(save_pathP2)) {
@@ -114,12 +113,12 @@ create_custom_spatial_plot <- function(theta, pos, colors, title, topic_order, r
 # LOAD DATA AND DEFINE COLORS
 # ============================================
 ```{r load_data_and_setup}
-# Load lesion only integrated object (for P2_L vs other lesions comparison)
-integrated_Eth_cohort_filteredL <- readRDS(paste0(save_pathL, "lesion_only_integrated_obj_35_LDA_topics_added.rds"))
+# Load lesion only integrated object (for P1_L vs other lesions comparison)
+integrated_Eth_cohort_filteredL <- readRDS(paste0(save_pathL, "lesion_only_integrated_obj_35_LDA_topics_added.Rds"))
 cat("Lesion-only object loaded:", ncol(integrated_Eth_cohort_filteredL), "spots\n")
 print(table(integrated_Eth_cohort_filteredL$sample_id))
 
-# Load lesion + non-lesion integrated object
+# Load lesion + non-lesion integrated object (for P2_L vs P2_NL comparison)
 integrated_Eth_cohort_filtered <- readRDS(paste0(save_path, "integrated_seurat_obj_23_LDA_topics_added.rds"))
 cat("Combined object loaded:", ncol(integrated_Eth_cohort_filtered), "spots\n")
 print(table(integrated_Eth_cohort_filtered$sample_id))
@@ -180,7 +179,7 @@ patient_colors <- c(
   "P2_L" = "#A3A500", 
   "P3_L" = "#00BF7D", 
   "P4_L" = "#00B0F6", 
-  "P6_L" = "#E76BF3"
+  "P5_L" = "#E76BF3"
 )
 
 # Create P2_L vs Others grouping
@@ -234,7 +233,7 @@ top_up_p2 <- p2_markers %>%
 
 # Scale data
 integrated_Eth_cohort_filteredL <- ScaleData(integrated_Eth_cohort_filteredL, features = top_up_p2)
-mat_up_p2 <- GetAssayData(integrated_Eth_cohort_filteredL, slot = "scale.data")[top_up_p2, ]
+mat_up_p2 <- GetAssayData(integrated_Eth_cohort_filteredL, layer = "scale.data")[top_up_p2, ]
 
 # Column annotation
 col_anno_p2 <- HeatmapAnnotation(
@@ -421,7 +420,7 @@ p <- SCpubr::do_BoxPlot(
     c("P2_L", "P1_L"),
     c("P2_L", "P3_L"),
     c("P2_L", "P4_L"),
-    c("P2_L", "P6_L")
+    c("P2_L", "P5_L")
   ),
   map_signif_level = FALSE
 )

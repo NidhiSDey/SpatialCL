@@ -34,7 +34,9 @@ disease_group <- c("MCL", "healthy", "LCL", "healthy", "MCL",
                    "healthy", "LCL", "healthy", "DCL", "healthy")
 
 # Define paths
-save_pathL <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_sep/lesion/iteration_nov2025/")
+read_path <- paste0(study_path, "R/No_P5/test/")
+save_pathL <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_sep/lesion/iteration_nov2025/test/")
+save_path <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_comb/test/")
 
 # Manual granuloma annotation path
 granuloma_csv_path <- paste0(study_path, "V12N28-391/PK_391_4_4_run/outs/P3_GRANULOMAS.csv")
@@ -115,8 +117,8 @@ create_custom_spatial_plot <- function(theta, pos, colors, title, topic_order, r
 # LOAD DATA AND DEFINE COLORS
 # ============================================
 ```{r load_data_and_setup}
-# Load lesion only integrated object
-integrated_Eth_cohort_filteredL <- readRDS(paste0(save_pathL, "lesion_only_integrated_obj_35_LDA_topics_added.rds"))
+# Load lesion only integrated object (for P1_L vs other lesions comparison)
+integrated_Eth_cohort_filteredL <- readRDS(paste0(save_pathL, "lesion_only_integrated_obj_35_LDA_topics_added.Rds"))
 cat("Lesion-only object loaded:", ncol(integrated_Eth_cohort_filteredL), "spots\n")
 print(table(integrated_Eth_cohort_filteredL$sample_id))
 
@@ -176,7 +178,7 @@ patient_colors <- c(
   "P2_L" = "#A3A500", 
   "P3_L" = "#00BF7D", 
   "P4_L" = "#00B0F6", 
-  "P6_L" = "#E76BF3"
+  "P5_L" = "#E76BF3"
 )
 
 # Set up comparison
@@ -374,7 +376,7 @@ granuloma_exp <- p3_subset@meta.data %>%
 
 for (gene in granuloma_genes) {
   if (gene %in% rownames(p3_subset)) {
-    granuloma_exp[[gene]] <- GetAssayData(p3_subset, slot = "data")[gene, ]
+    granuloma_exp[[gene]] <- GetAssayData(p3_subset, layer = "data")[gene, ]
   }
 }
 

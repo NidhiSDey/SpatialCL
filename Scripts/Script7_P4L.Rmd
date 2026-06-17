@@ -37,8 +37,9 @@ sample_group <- rep(c("healthy", "lesion"), 5)
 
 
 # Define paths
-read_path <- paste0(study_path, "R/No_P5/")
-save_pathL <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_sep/lesion/iteration_nov2025/")
+read_path <- paste0(study_path, "R/No_P5/test/")
+save_pathL <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_sep/lesion/iteration_nov2025/test/")
+save_path <- paste0(study_path, "R/No_P5/STdeconvolve/healthy_lesion_comb/test/")
 
 # Tissue category CSV paths
 tissue_csv_base <- paste0(study_path, "V12N28-392/PK_392_5_4_run/outs/")
@@ -167,8 +168,8 @@ perform_comparisons <- function(data, category_name, ref_group = "P4_L") {
 # ============================================
 ```{r load_data_and_setup}
 # Load lesion only integrated object
-integrated_Eth_cohort_filteredL <- readRDS(paste0(save_pathL, "lesion_only_integrated_obj_35_LDA_topics_added.rds"))
-
+# Load lesion only integrated object (for P1_L vs other lesions comparison)
+integrated_Eth_cohort_filteredL <- readRDS(paste0(save_pathL, "lesion_only_integrated_obj_35_LDA_topics_added.Rds"))
 cat("Lesion-only object loaded:", ncol(integrated_Eth_cohort_filteredL), "spots\n")
 print(table(integrated_Eth_cohort_filteredL$sample_id))
 
@@ -228,7 +229,7 @@ patient_colors <- c(
   "P2_L" = "#A3A500", 
   "P3_L" = "#00BF7D", 
   "P4_L" = "#00B0F6", 
-  "P6_L" = "#E76BF3"
+  "P5_L" = "#E76BF3"
 )
 
 # Set up comparison
@@ -1058,7 +1059,7 @@ integrated_Eth_cohort_filteredL <- ScaleData(
   integrated_Eth_cohort_filteredL, 
   features = top_genes_UP_p4
 )
-mat_UP_p4 <- GetAssayData(integrated_Eth_cohort_filteredL, slot = "scale.data")[top_genes_UP_p4, ]
+mat_UP_p4 <- GetAssayData(integrated_Eth_cohort_filteredL, layer = "scale.data")[top_genes_UP_p4, ]
 
 # Categorize genes
 gene_category_p4 <- sapply(top_genes_UP_p4, function(gene) {

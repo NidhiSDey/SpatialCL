@@ -4,7 +4,7 @@
 # ==============================================================================
 # This script generates all figures for the manuscript using the final
 # annotated Seurat object with clinical metadata
-# and uses "integrated_seurat_obj.Rds.rds" for this 
+# and uses "integrated_seurat_obj.Rds"" for this 
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
@@ -41,6 +41,12 @@ integrated_Eth_cohort <- readRDS(
   paste0(save_path, "integrated_seurat_obj.Rds")
 )
 
+
+# # ------------------------------------------------------------------------------
+# # Update Object
+# # ------------------------------------------------------------------------------
+# integrated_Eth_cohort <- UpdateSeuratObject(integrated_Eth_cohort)
+# saveRDS(integrated_Eth_cohort, paste0(save_path, "integrated_seurat_obj_updated.Rds"))
 # ------------x------------------------------------------------------------------
 # Define Color Palettes
 # ------------------------------------------------------------------------------
@@ -444,6 +450,7 @@ dev.off()
 # ------------------------------------------------------------------------------
 
 # Set identity to tissue type (healthy vs lesion)
+DefaultAssay(integrated_Eth_cohort)
 Idents(integrated_Eth_cohort) <- "group"
 
 # Find differentially expressed genes between lesion and healthy tissue

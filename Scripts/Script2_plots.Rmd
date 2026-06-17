@@ -84,6 +84,8 @@ cat("\nNumber of topics:", length(stdeconv_cols), "\n")
 
 # Verify these are the correct topics
 stopifnot(length(stdeconv_cols) == 23)
+
+
 ```
 
 
@@ -94,7 +96,7 @@ stopifnot(length(stdeconv_cols) == 23)
 
 # Topic color palette (matching previous figures)
 ident_colours <- c(
-  "APC_EarlyPlasma"   = "#00CED1",
+  "APC_EarlyPlasma"   = "#5F9EA0",
   "BasalKer"          = "#474747",
   "Cytomono"          = "#00008B",
   "EccrineSweatGlands" = "#B2DF8A",
@@ -105,16 +107,16 @@ ident_colours <- c(
   "LC3"               = "#DC143C",
   "LE"                = "#FFE4E1",
   "Lipid_Macs"        = "#FF7F00",
-  "M1_mac"            = "darkred",
+  "M1_mac"            = "#FFD700",
   "M2_Th"             = "#32CD32",
   "Muscle"            = "#faf4cf",
-  "Neut_Ker"          = "#FFD700",
+  "Neut_Ker"          = "#00FF00",
   "Plasmablast"       = "#00CED1",
   "Schwann"           = "#F0FFF0",
-  "Sebaceous"         = "#B8860B",
+  "Sebaceous"         = "#808080",
   "SuprabasalKer"     = "#BDB76B",
   "Tact"              = "#6A3D9A",
-  "Tissue_Rep_M2Mac"  = "#4169E1",
+  "Tissue_Rep_M2Mac"  = "darkred",
   "TopKer"            = "#FDBF6F",
   "VE"                = "#B0C4DE"
 )
@@ -188,6 +190,8 @@ print(table(integrated_Eth_cohort_filtered$dominant_celltype))
 cat("\nDominant cell type levels:\n")
 print(levels(Idents(integrated_Eth_cohort_filtered)))
 ```
+
+
 ```{r figure_2E_umap_overall}
 # ==============================================================================
 # FIGURE 2E: UMAP VISUALIZATIONS

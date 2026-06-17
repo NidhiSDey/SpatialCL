@@ -420,8 +420,8 @@ new_names[new_names == "Eth_391_4_4"] <- "P3_L"
 new_names[new_names == "Eth_392_5_2"] <- "P4_H"
 new_names[new_names == "Eth_392_5_4"] <- "P4_L"
 
-new_names[new_names == "Eth_391_7_2"] <- "P6_H"
-new_names[new_names == "Eth_391_7_4"] <- "P6_L"
+new_names[new_names == "Eth_391_7_2"] <- "P5_H"
+new_names[new_names == "Eth_391_7_4"] <- "P5_L"
 
 # Add sample_id metadata column
 integrated_Eth_cohort <- AddMetaData(
@@ -452,5 +452,12 @@ head(integrated_Eth_cohort@meta.data[, c("orig.ident", "sample_id", "group", "pa
 
 # Cross-tabulate original ID with patient ID
 table(integrated_Eth_cohort$orig.ident, integrated_Eth_cohort$patient)
+```
+```{r}
+# ------------------------------------------------------------------------------
+# Save RDS
+# ------------------------------------------------------------------------------
+
+saveRDS(integrated_Eth_cohort, paste0(save_path, "integrated_seurat_obj.Rds"))
 ```
 
